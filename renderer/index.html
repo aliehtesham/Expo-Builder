@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'" />
+  <title>Expo Builder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Roboto+Flex:opsz,wght@8..144,300..800&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/m3.css" />
+  <link rel="stylesheet" href="assets/app.css" />
+</head>
+<body>
+  <div class="bg-scene" aria-hidden="true">
+    <div class="blob b1"></div>
+    <div class="blob b2"></div>
+    <div class="blob b3"></div>
+    <div class="grain"></div>
+  </div>
+
+  <header class="topbar glass">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true">
+          <rect x="5.5" y="4" width="3.6" height="16" rx="1.8"/>
+          <rect x="5.5" y="4" width="13" height="3.6" rx="1.8"/>
+          <rect x="5.5" y="10.2" width="9" height="3.6" rx="1.8"/>
+          <rect x="5.5" y="16.4" width="13" height="3.6" rx="1.8"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <span class="brand-name">Expo Builder</span>
+        <span class="brand-sub">Build · Sign · Ship</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <ol class="stepper" id="stepper">
+        <li class="step active" data-step="1"><span class="step-dot">1</span><span class="step-label">Setup</span></li>
+        <li class="step" data-step="2"><span class="step-dot">2</span><span class="step-label">Project</span></li>
+        <li class="step" data-step="3"><span class="step-dot">3</span><span class="step-label">Configure</span></li>
+        <li class="step" data-step="4"><span class="step-dot">4</span><span class="step-label">Build</span></li>
+        <li class="step" data-step="5"><span class="step-dot">5</span><span class="step-label">Output</span></li>
+      </ol>
+      <div class="win-controls">
+        <button type="button" class="win-btn" id="win-minimize" title="Minimize" aria-label="Minimize window">
+          <svg viewBox="0 0 24 24" class="icon"><path d="M5 11.25h14v1.5H5z"/></svg>
+        </button>
+        <button type="button" class="win-btn close" id="win-close" title="Close" aria-label="Close window">
+          <svg viewBox="0 0 24 24" class="icon"><path d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6 10.6 12 5 6.4z"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- ══════════════════════════ PAGE 0 · ENVIRONMENT ═══════════════════════ -->
+    <section class="page active" id="page-deps">
+      <div class="hero">
+        <h1 class="display">First, your toolchain.<br /><span class="grad-text">Everything runs on this PC.</span></h1>
+        <p class="hero-sub">Expo Builder compiles and signs locally — Node, Java, the Android SDK and friends must be installed first. This check is read-only and never installs anything.</p>
+      </div>
+
+      <div class="card glass env-card" id="env-card">
+        <div class="projects-head">
+          <h3 class="section-title">Detected dependencies</h3>
+          <span class="dim" id="env-summary">Checking your machine…</span>
+          <button type="button" class="icon-btn sm" id="btn-env-recheck" title="Re-run the checks" aria-label="Re-run the environment checks">
+            <svg viewBox="0 0 24 24" class="icon"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+          </button>
+        </div>
+        <div id="env-list"></div>
+        <p class="note" id="env-note">Checked on every launch: PATH, <code>JAVA_HOME</code>, <code>ANDROID_HOME</code> and the default SDK location. Installed something just now? Use the re-check button.</p>
+      </div>
+
+      <div class="summary-bar glass">
+        <div class="summary-info" id="env-summary-info">Running the checks…</div>
+        <div class="row">
+          <button type="button" class="btn tonal" id="btn-env-recheck2">
+            <svg viewBox="0 0 24 24" class="icon"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+            Check again
+          </button>
+          <button type="button" class="btn filled lg" id="btn-env-continue" disabled>
+            Continue
+            <svg viewBox="0 0 24 24" class="icon"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8-8-8z"/></svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════ PAGE 1 · PROJECT ══════════════════════════ -->
+    <section class="page" id="page-select">
+      <div class="hero">
+        <h1 class="display">Build any Expo app,<br /><span class="grad-text">right from your disk.</span></h1>
+        <p class="hero-sub">Pick a project folder, configure the release, and ship a signed APK or AAB — everything runs locally.</p>
+      </div>
+
+      <div class="card glass select-card" id="select-card">
+        <div class="select-cta">
+          <button class="btn filled lg" id="btn-pick">
+            <svg viewBox="0 0 24 24" class="icon"><path d="M20 6h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2zm0 12H4V8h16v10z"/></svg>
+            New Project
+          </button>
+          <p class="hint">A native Windows folder picker will open. The app verifies it is a valid Expo project and asks you to name it.</p>
+        </div>
+      </div>
+
+      <div class="card glass projects-card hidden" id="projects-card">
+        <div class="projects-head">
+          <h3 class="section-title">Your projects</h3>
+          <span class="dim" id="projects-count"></span>
+        </div>
+        <div id="projects-list"></div>
+      </div>
+
+      <div class="card glass error-card hidden" id="project-error" role="alert">
+        <svg viewBox="0 0 24 24" class="icon err"><path d="M12 2 1 21h22L12 2zm1 15h-2v-2h2v2zm0-4h-2V9h2v4z"/></svg>
+        <div>
+          <strong>That folder is not a valid Expo project</strong>
+          <p id="project-error-msg">—</p>
+        </div>
+      </div>
+
+      <div class="card glass project-card hidden" id="project-card">
+        <div class="project-head">
+          <div class="project-avatar" id="project-avatar">M</div>
+          <div class="project-title">
+            <h2 id="project-name">—</h2>
+            <p class="mono dim" id="project-dir">—</p>
+          </div>
+          <span class="badge ok" id="project-badge">Valid Expo project</span>
+        </div>
+        <dl class="project-meta" id="project-meta"></dl>
+        <div class="row end">
+          <button class="btn tonal" id="btn-repick">Change folder</button>
+          <button class="btn filled" id="btn-continue">
+            Continue
+            <svg viewBox="0 0 24 24" class="icon"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8-8-8z"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="card glass history-card hidden" id="history-card">
+        <div class="projects-head">
+          <h3 class="section-title">Build history</h3>
+          <span class="dim" id="history-count"></span>
+          <button type="button" class="icon-btn sm" id="history-clear" title="Clear this project's build history" aria-label="Clear build history">
+            <svg viewBox="0 0 24 24" class="icon"><path d="M6 19c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+          </button>
+        </div>
+        <div id="history-list"></div>
+      </div>
+    </section>
+
+    <!-- ═════════════════════════ PAGE 2 · CONFIGURE ═════════════════════════ -->
+    <section class="page" id="page-config">
+      <div class="page-head">
+        <button class="btn text sm" id="btn-back-select">
+          <svg viewBox="0 0 24 24" class="icon flip-x"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8-8-8z"/></svg>
+          Project
+        </button>
+        <h2 class="headline">Release configuration</h2>
+        <p class="dim" id="config-project-label">—</p>
+      </div>
+
+      <form id="build-form" novalidate>
+        <div class="card glass form-card">
+          <h3 class="section-title">Identity</h3>
+          <p class="note" id="identity-note">—</p>
+          <div class="grid two">
+            <div class="field" id="wrap-version">
+              <input id="field-version" type="text" placeholder=" " autocomplete="off" spellcheck="false" />
+              <label for="field-version">App version (x.y.z)</label>
+              <p class="field-err" id="err-version"></p>
+            </div>
+            <div class="field" id="wrap-versioncode">
+              <input id="field-versioncode" type="text" inputmode="numeric" placeholder=" " autocomplete="off" />
+              <label for="field-versioncode">versionCode (android)</label>
+              <p class="hint-inline">Auto-derived: major·10000 + minor·100 + patch</p>
+              <p class="field-err" id="err-versioncode"></p>
+            </div>
+          </div>
+          <div class="version-warn hidden" id="version-warn" role="status">
+            <svg viewBox="0 0 24 24" class="icon"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+            <ul id="version-warn-list"></ul>
+          </div>
+          <p class="note" id="version-note">The version is written to <code>package.json</code> and <code>app.json</code> (<code>expo.version</code> + <code>expo.android.versionCode</code>) before the build starts.</p>
+        </div>
+
+        <div class="card glass form-card">
+          <h3 class="section-title">Output</h3>
+          <div class="field-label">Format</div>
+          <div class="segmented" id="seg-format" role="radiogroup" aria-label="Output format">
+            <div class="seg-thumb"></div>
+            <button type="button" class="seg-option active" data-value="apk" role="radio" aria-checked="true">
+              <svg viewBox="0 0 24 24" class="icon"><path d="M6 18c0 .55.45 1 1 1h1v3.5a1.5 1.5 0 0 0 3 0V19h2v3.5a1.5 1.5 0 0 0 3 0V19h1c.55 0 1-.45 1-1V9H6v9zM3.5 9A1.5 1.5 0 0 0 2 10.5v5A1.5 1.5 0 0 0 5 15.5v-5A1.5 1.5 0 0 0 3.5 9zm17 0A1.5 1.5 0 0 0 19 10.5v5a1.5 1.5 0 0 0 3 0v-5A1.5 1.5 0 0 0 20.5 9zM16.53 3.16l1.3-1.3-.8-.8-1.32 1.27A6.9 6.9 0 0 0 12 1.6c-1.05 0-1.9.27-2.71.73L7.97 1.06l-.8.8 1.3 1.3A5.9 5.9 0 0 0 6 8h12a5.9 5.9 0 0 0-1.47-4.84zM9.5 6.6a.9.9 0 1 1 .9-.9.9.9 0 0 1-.9.9zm5 0a.9.9 0 1 1 .9-.9.9.9 0 0 1-.9.9z"/></svg>
+              APK <small>install directly</small>
+            </button>
+            <button type="button" class="seg-option" data-value="aab" role="radio" aria-checked="false">
+              <svg viewBox="0 0 24 24" class="icon"><path d="M20 2H4a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm0 18H4V4h16v16zM6 8h12v2H6V8zm0 4h8v2H6v-2z"/></svg>
+              AAB <small>Play Store bundle</small>
+            </button>
+          </div>
+
+          <div class="arch-block" id="arch-block">
+            <div class="field-label">APK architectures <span class="dim">(all selected by default)</span></div>
+            <div class="chip-row" id="arch-chips">
+              <button type="button" class="chip selected" data-arch="arm64-v8a"><span class="chip-check"></span>arm64-v8a <small>modern devices</small></button>
+              <button type="button" class="chip selected" data-arch="armeabi-v7a"><span class="chip-check"></span>armeabi-v7a <small>older devices</small></button>
+              <button type="button" class="chip selected" data-arch="x86_64"><span class="chip-check"></span>x86_64 <small>emulators</small></button>
+              <button type="button" class="chip selected" data-arch="x86"><span class="chip-check"></span>x86 <small>legacy emulators</small></button>
+            </div>
+            <p class="field-err" id="err-archs"></p>
+          </div>
+        </div>
+
+        <div class="card glass form-card" id="signing-card">
+          <h3 class="section-title">Signing</h3>
+          <label class="check-row" id="signed-row">
+            <span class="checkbox" id="signed-checkbox" aria-hidden="true">
+              <svg viewBox="0 0 24 24" class="icon"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            </span>
+            <input type="checkbox" id="field-signed" checked />
+            <span class="check-text"><strong>Sign the app with a release key</strong><small>Generates &amp; reuses <code>android-key/android-key.jks</code> in the project</small></span>
+          </label>
+
+          <div class="sign-fields" id="sign-fields">
+            <div class="grid two">
+              <div class="field has-lead" id="wrap-alias">
+                <svg viewBox="0 0 24 24" class="icon lead"><path d="M12.65 10C11.83 7.67 9.61 6 7 6a6 6 0 1 0 5.65 8H17v4h4v-4h2v-4H12.65zM7 14a2 2 0 1 1 2-2 2 2 0 0 1-2 2z"/></svg>
+                <input id="field-alias" class="has-lead" type="text" placeholder=" " autocomplete="off" spellcheck="false" />
+                <label for="field-alias">Key alias</label>
+                <p class="field-err" id="err-alias"></p>
+              </div>
+              <div class="field combo-field" id="wrap-country">
+                <div class="country-combo" id="country-combo">
+                  <button type="button" class="combo-btn" id="country-btn" aria-haspopup="listbox">
+                    <span class="combo-value" id="country-value">Select country</span>
+                    <svg viewBox="0 0 24 24" class="icon trail"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>
+                  </button>
+                  <div class="combo-menu glass" id="country-menu" role="listbox">
+                    <div class="combo-search">
+                      <svg viewBox="0 0 24 24" class="icon lead"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+                      <input type="text" id="country-search" placeholder="Search country…" autocomplete="off" />
+                    </div>
+                    <div class="combo-list" id="country-list"></div>
+                  </div>
+                </div>
+                <label class="float-label">Country (certificate)</label>
+                <p class="field-err" id="err-country"></p>
+              </div>
+            </div>
+
+            <div class="grid two">
+              <div class="field has-lead" id="wrap-keypass">
+                <svg viewBox="0 0 24 24" class="icon lead"><path d="M18 8h-1V6a5 5 0 0 0-10 0v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zm-9-2a3 3 0 0 1 6 0v2H9V6z"/></svg>
+                <input id="field-keypass" class="has-lead" type="password" placeholder=" " autocomplete="new-password" spellcheck="false" />
+                <label for="field-keypass">Key password</label>
+                <div class="trail-btns">
+                  <button type="button" class="icon-btn" data-gen="keypass" title="Generate password" aria-label="Generate key password">
+                    <svg viewBox="0 0 24 24" class="icon"><path d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z"/></svg>
+                  </button>
+                  <button type="button" class="icon-btn" data-toggle-pass="field-keypass" title="Show / hide" aria-label="Show or hide key password">
+                    <svg viewBox="0 0 24 24" class="icon eye-open"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17a5 5 0 1 1 5-5 5 5 0 0 1-5 5zm0-8a3 3 0 1 0 3 3 3 3 0 0 0-3-3z"/></svg>
+                    <svg viewBox="0 0 24 24" class="icon eye-closed"><path d="M12 7a5 5 0 0 1 4.9 4h2.03A7 7 0 0 0 7.53 5.7l1.45 1.46A4.9 4.9 0 0 1 12 7zm0 10a5 5 0 0 1-4.9-4H5.07a7 7 0 0 0 11.4 5.3l-1.45-1.46A4.9 4.9 0 0 1 12 17zm7-13 1.5 1.5L4.5 20.5 3 19 19 4zM2 12c1.73-4.39 6-7.5 11-7.5 1.4 0 2.74.25 3.98.7L15.6 6.6A9.8 9.8 0 0 0 12 6a9.8 9.8 0 0 0-8.82 5.5A9.9 9.9 0 0 0 6.3 14.4l-1.5 1.5A11.8 11.8 0 0 1 2 12zm20 0a11.8 11.8 0 0 1-2.8 3.9l-1.5-1.5a9.9 9.9 0 0 0 3.12-3.4A9.8 9.8 0 0 0 18.4 8.4l1.38-1.38c.17.13.34.26.5.4A11.7 11.7 0 0 1 23 12h-1z"/></svg>
+                  </button>
+                </div>
+                <p class="field-err" id="err-keypass"></p>
+              </div>
+              <div class="field has-lead" id="wrap-storepass">
+                <svg viewBox="0 0 24 24" class="icon lead"><path d="M12.65 10C11.83 7.67 9.61 6 7 6a6 6 0 1 0 5.65 8H17v4h4v-4h2v-4H12.65zM7 14a2 2 0 1 1 2-2 2 2 0 0 1-2 2z"/></svg>
+                <input id="field-storepass" class="has-lead" type="password" placeholder=" " autocomplete="new-password" spellcheck="false" />
+                <label for="field-storepass">Keystore password</label>
+                <div class="trail-btns">
+                  <button type="button" class="icon-btn" data-gen="storepass" title="Generate password" aria-label="Generate keystore password">
+                    <svg viewBox="0 0 24 24" class="icon"><path d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z"/></svg>
+                  </button>
+                  <button type="button" class="icon-btn" data-toggle-pass="field-storepass" title="Show / hide" aria-label="Show or hide keystore password">
+                    <svg viewBox="0 0 24 24" class="icon eye-open"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17a5 5 0 1 1 5-5 5 5 0 0 1-5 5zm0-8a3 3 0 1 0 3 3 3 3 0 0 0-3-3z"/></svg>
+                    <svg viewBox="0 0 24 24" class="icon eye-closed"><path d="M12 7a5 5 0 0 1 4.9 4h2.03A7 7 0 0 0 7.53 5.7l1.45 1.46A4.9 4.9 0 0 1 12 7zm0 10a5 5 0 0 1-4.9-4H5.07a7 7 0 0 0 11.4 5.3l-1.45-1.46A4.9 4.9 0 0 1 12 17zm7-13 1.5 1.5L4.5 20.5 3 19 19 4zM2 12c1.73-4.39 6-7.5 11-7.5 1.4 0 2.74.25 3.98.7L15.6 6.6A9.8 9.8 0 0 0 12 6a9.8 9.8 0 0 0-8.82 5.5A9.9 9.9 0 0 0 6.3 14.4l-1.5 1.5A11.8 11.8 0 0 1 2 12zm20 0a11.8 11.8 0 0 1-2.8 3.9l-1.5-1.5a9.9 9.9 0 0 0 3.12-3.4A9.8 9.8 0 0 0 18.4 8.4l1.38-1.38c.17.13.34.26.5.4A11.7 11.7 0 0 1 23 12h-1z"/></svg>
+                  </button>
+                </div>
+                <p class="field-err" id="err-storepass"></p>
+              </div>
+            </div>
+            <p class="note">Passwords are only used locally: <code>keytool</code> on this machine and <code>android/gradle.properties</code> of the project. At least 6 characters each.</p>
+          </div>
+        </div>
+
+        <div class="card glass form-card">
+          <button type="button" class="disclosure" id="btn-advanced" aria-expanded="false">
+            <svg viewBox="0 0 24 24" class="icon chev"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>
+            Advanced
+          </button>
+          <div class="advanced hidden" id="advanced-block">
+            <label class="check-row">
+              <span class="checkbox" id="relocate-checkbox" aria-hidden="true">
+                <svg viewBox="0 0 24 24" class="icon"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+              </span>
+              <input type="checkbox" id="field-relocate" checked />
+              <span class="check-text"><strong>Redirect heavy Gradle output to <code>C:\ExpoBuilds</code></strong><small>Keeps <code>android/build</code> &amp; friends off small project drives via NTFS junctions</small></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="summary-bar glass">
+          <div class="summary-info" id="summary-info">—</div>
+          <div class="row">
+            <button type="button" class="btn tonal" id="btn-validate">Check values</button>
+            <button type="submit" class="btn filled lg" id="btn-build">
+              <svg viewBox="0 0 24 24" class="icon"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8-8-8z"/></svg>
+              Start build
+            </button>
+          </div>
+        </div>
+      </form>
+    </section>
+
+    <!-- ═══════════════════════════ PAGE 3 · BUILD ═══════════════════════════ -->
+    <section class="page" id="page-build">
+      <div class="build-head">
+        <div class="build-title">
+          <h2 class="headline" id="build-title">Building release…</h2>
+          <div class="build-chips" id="build-chips"></div>
+        </div>
+        <div class="build-status">
+          <div class="phase-pill glass" id="phase-pill">
+            <span class="phase-spinner" id="phase-spinner"></span>
+            <span id="phase-label">Starting…</span>
+          </div>
+          <span class="mono dim" id="elapsed">00:00</span>
+          <button class="btn tonal danger" id="btn-cancel">Cancel</button>
+        </div>
+      </div>
+
+      <div class="console glass" id="console" referrerpolicy="no-referrer">
+        <div class="console-bar">
+          <span class="console-dots"><i></i><i></i><i></i></span>
+          <span class="console-title mono" id="console-title">build log</span>
+          <span class="console-live hidden" id="console-live">LIVE</span>
+          <button class="icon-btn sm" id="btn-copy-log" title="Copy log">
+            <svg viewBox="0 0 24 24" class="icon"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>
+          </button>
+        </div>
+        <div class="console-body" id="console-body" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════ PAGE 4 · OUTPUT ══════════════════════════ -->
+    <section class="page" id="page-result">
+      <div class="result-hero" id="result-hero">
+        <div class="result-burst">
+          <svg viewBox="0 0 24 24" class="icon big"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm-2 15-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+        </div>
+        <h2 class="headline" id="result-title">Build complete</h2>
+        <p class="dim" id="result-sub">—</p>
+      </div>
+
+      <div class="card glass artifacts-card">
+        <h3 class="section-title">Output files</h3>
+        <div id="artifact-list"></div>
+
+        <div class="zip-cta">
+          <div class="zip-copy">
+            <strong>Grab everything in one archive</strong>
+            <p class="dim">Output files <span id="zip-key-note">plus the keystore </span>packed as a single zip.</p>
+          </div>
+          <button class="btn filled lg" id="btn-download-zip">
+            <svg viewBox="0 0 24 24" class="icon"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></svg>
+            Download ZIP
+          </button>
+        </div>
+      </div>
+
+      <div class="row center-gap">
+        <button class="btn tonal" id="btn-open-project">
+          <svg viewBox="0 0 24 24" class="icon"><path d="M20 6h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2zm0 12H4V8h16v10z"/></svg>
+          Open project folder
+        </button>
+        <button class="btn text" id="btn-start-over">
+          <svg viewBox="0 0 24 24" class="icon"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+          Build another project
+        </button>
+      </div>
+    </section>
+  </main>
+
+  <!-- ═══════════════════════════ OVERLAYS ═══════════════════════════ -->
+  <div class="scrim hidden" id="scrim"></div>
+
+  <div class="dialog glass hidden" id="dlg-name" role="dialog" aria-modal="true" aria-labelledby="dlg-name-title">
+    <div class="dialog-icon gen">
+      <svg viewBox="0 0 24 24" class="icon"><path d="M20 6h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2zm0 12H4V8h16v10z"/></svg>
+    </div>
+    <h2 id="dlg-name-title">Name this project</h2>
+    <p class="dialog-body">The folder you picked becomes a project. Choose the name the build should use — it labels the APK/AAB files and the signing certificate.</p>
+    <div class="field" id="wrap-name">
+      <input id="field-projectname" type="text" placeholder=" " autocomplete="off" spellcheck="false" maxlength="60" />
+      <label for="field-projectname">Project name</label>
+      <p class="field-err" id="err-projectname"></p>
+    </div>
+    <p class="dialog-body mono dim" id="dlg-name-dir">—</p>
+    <div class="row end dialog-actions">
+      <button class="btn text" id="btn-name-cancel">Cancel</button>
+      <button class="btn filled" id="btn-name-ok">
+        Define project
+        <svg viewBox="0 0 24 24" class="icon"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8-8-8z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="dialog glass hidden" id="dlg-debug" role="dialog" aria-modal="true" aria-labelledby="dlg-debug-title">
+    <div class="dialog-icon err">
+      <svg viewBox="0 0 24 24" class="icon"><path d="M12 2 1 21h22L12 2zm1 15h-2v-2h2v2zm0-4h-2V9h2v4z"/></svg>
+    </div>
+    <h2 id="dlg-debug-title">Build failed</h2>
+    <p class="dialog-body" id="dlg-debug-text">Do you want to run it again in debug mode with stack-trace and more details?</p>
+    <div class="row end dialog-actions">
+      <button class="btn text" id="btn-fail-close">Close</button>
+      <button class="btn tonal" id="btn-fail-log">Keep log</button>
+      <button class="btn filled" id="btn-fail-debug">
+        <svg viewBox="0 0 24 24" class="icon"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+        Run in debug mode
+      </button>
+    </div>
+  </div>
+
+  <div class="dialog glass hidden" id="dlg-generator" role="dialog" aria-modal="true" aria-labelledby="dlg-gen-title">
+    <div class="dialog-icon gen">
+      <svg viewBox="0 0 24 24" class="icon"><path d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z"/></svg>
+    </div>
+    <h2 id="dlg-gen-title">Generate a password</h2>
+    <div class="gen-output mono" id="gen-output">—</div>
+    <div class="strength"><div class="strength-bar"><div class="strength-fill" id="gen-strength"></div></div><span id="gen-strength-label">—</span></div>
+    <label class="slider-row">Length <output id="gen-len-out">16</output>
+      <input type="range" id="gen-len" min="8" max="32" value="16" />
+    </label>
+    <div class="gen-toggles">
+      <label class="check-inline"><span class="checkbox small" data-gt="upper"><svg viewBox="0 0 24 24" class="icon"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></span>A–Z</label>
+      <label class="check-inline"><span class="checkbox small" data-gt="lower"><svg viewBox="0 0 24 24" class="icon"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></span>a–z</label>
+      <label class="check-inline"><span class="checkbox small" data-gt="digit"><svg viewBox="0 0 24 24" class="icon"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></span>0–9</label>
+      <label class="check-inline"><span class="checkbox small" data-gt="symbol"><svg viewBox="0 0 24 24" class="icon"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></span>!@#$%</label>
+      <label class="check-inline"><span class="checkbox small" data-gt="ambiguous"><svg viewBox="0 0 24 24" class="icon"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></span>allow look-alikes</label>
+    </div>
+    <div class="row end dialog-actions">
+      <button class="btn tonal" id="btn-gen-refresh">
+        <svg viewBox="0 0 24 24" class="icon"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+        Reroll
+      </button>
+      <button class="btn text" id="btn-gen-cancel">Cancel</button>
+      <button class="btn filled" id="btn-gen-use">Use this password</button>
+    </div>
+  </div>
+
+  <div class="dialog wide glass hidden" id="dlg-history" role="dialog" aria-modal="true" aria-labelledby="dlg-history-title">
+    <div class="dialog-icon gen">
+      <svg viewBox="0 0 24 24" class="icon"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L8.83 12H6a7 7 0 1 1 7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+    </div>
+    <h2 id="dlg-history-title">—</h2>
+    <p class="dialog-body dim" id="dlg-history-sub">—</p>
+    <dl class="project-meta" id="history-meta"></dl>
+    <h3 class="section-title files-title">Files</h3>
+    <div class="history-files" id="history-files"></div>
+    <div class="row end dialog-actions">
+      <button class="btn text" id="btn-history-close">Close</button>
+    </div>
+  </div>
+
+  <div class="dialog glass hidden" id="dlg-rebuild" role="dialog" aria-modal="true" aria-labelledby="dlg-rebuild-title">
+    <div class="dialog-icon warn">
+      <svg viewBox="0 0 24 24" class="icon"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+    </div>
+    <h2 id="dlg-rebuild-title">Rebuild this version?</h2>
+    <p class="dialog-body" id="dlg-rebuild-text">—</p>
+    <p class="dialog-body hidden" id="dlg-rebuild-lower"></p>
+    <div class="rebuild-files" id="rebuild-files"></div>
+    <div class="row end dialog-actions">
+      <button class="btn text" id="btn-rebuild-cancel">Cancel</button>
+      <button class="btn tonal" id="btn-rebuild-keep">Build without deleting</button>
+      <button class="btn filled" id="btn-rebuild-delete">
+        <svg viewBox="0 0 24 24" class="icon"><path d="M6 19c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+        Delete old files &amp; build
+      </button>
+    </div>
+  </div>
+
+  <div class="snackbar glass hidden" id="snackbar" role="status"><span id="snackbar-text"></span></div>
+
+  <script src="assets/countries.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>

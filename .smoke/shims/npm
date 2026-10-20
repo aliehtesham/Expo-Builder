@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+echo "npm shim args: $*"
+if [ "$1" = "install" ]; then
+  echo "success Saved lockfile."
+  exit 0
+fi
+if [ "$1" = "expo" ]; then
+  echo "Running expo prebuild --platform android --clean"
+  P="${PWD}"
+  mkdir -p "$P/android/app/build/outputs/apk/release" "$P/android/app/src"
+  printf 'expo.useLegacyPackaging=false\n' > "$P/android/gradle.properties"
+  cat > "$P/android/app/build.gradle" <<'GRADLE'
+android {
+    compileSdkVersion rootProject.ext.compileSdkVersion
+    targetSdkVersion rootProject.ext.targetSdkVersion
+}
+GRADLE
+  cat > "$P/android/gradlew" <<'GW'
+#!/usr/bin/env bash
+echo "Gradle shim"
+echo "> Task :app:preBuild"
+echo "> Task :app:bundleReleaseJsAndAssets"
+for a in $(echo "$ARCHS" | tr ',' ' '); do
+  echo "app-$a-release.apk built" > "app/build/outputs/apk/release/app-$a-release.apk"
+done
+if [ "${FAIL_SHIM:-0}" = "1" ]; then
+  echo "> Task :app:packageRelease FAILED"
+  echo "FAILURE: Build failed with an exception."
+  exit 1
+fi
+echo "BUILD SUCCESSFUL in 3s"
+GW
+  chmod +x "$P/android/gradlew"
+  echo "Android project generated."
+  exit 0
+fi
+exit 1

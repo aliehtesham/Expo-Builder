@@ -4,6 +4,12 @@ A local Material 3 Expressive desktop app (Electron) that builds and signs **any
 
 ![Expo Builder](.smoke/2-config.png)
 
+## Download
+
+A ready-to-run Windows installer is attached to the [latest release](https://github.com/aliehtesham/Expo-Builder/releases/latest) — download **`Expo-Builder-Setup-1.0.0.exe`**, run it, and follow the setup wizard (the app itself checks all build prerequisites on first launch).
+
+To build the installer yourself instead: `npm install && npm run dist` → `dist/Expo Builder Setup 1.0.0.exe`.
+
 ## Run it
 
 ```bash

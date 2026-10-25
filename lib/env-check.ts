@@ -2,20 +2,21 @@
 // Environment pre-flight: detect every tool the build pipeline needs
 // (bash, Node, package managers, JDK, Android SDK + platform-tools,
 // build-tools, platforms, NDK, CMake) BEFORE the user enters the app.
-// Pure Node — usable from the Electron main process and `node lib/env-check.js`.
+// Pure Node — usable from the Electron main process and `node out/lib/env-check.js`.
 
-const { spawnSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+import { spawnSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
 const WIN = process.platform === 'win32';
 const PROBE_TIMEOUT = 15000;
 
 // ------------------------------------------------------------------ processes
-function probe(cmd, args) {
-  const opts = { windowsHide: true, timeout: PROBE_TIMEOUT, encoding: 'utf8' };
+function probe(cmd: string, args: string[]): string | null {
+  const base = { windowsHide: true, timeout: PROBE_TIMEOUT, encoding: 'utf8' as const };
   // npm/yarn/... are .cmd shims on Windows; only absolute .exe paths spawn directly.
-  if (WIN && !/\.(exe|bat|cmd)$/i.test(cmd)) opts.shell = true;
+  const opts = WIN && !/\.(exe|bat|cmd)$/i.test(cmd) ? { ...base, shell: true } : base;
   let r;
   try {
     r = spawnSync(cmd, args, opts);
@@ -28,7 +29,7 @@ function probe(cmd, args) {
   return out;
 }
 
-function listDirs(dir) {
+function listDirs(dir: string): string[] {
   try {
     return fs
       .readdirSync(dir, { withFileTypes: true })
@@ -39,12 +40,12 @@ function listDirs(dir) {
   }
 }
 
-function exists(p) {
+function exists(p: string | null | undefined): boolean {
   return !!p && fs.existsSync(p);
 }
 
 /** Numeric compare of dotted version strings ("3.22.1" vs "26.1.10909125"). */
-function compareVersionStrings(a, b) {
+function compareVersionStrings(a: string, b: string): number {
   const pa = String(a).split(/[.\-]/).map((n) => parseInt(n, 10) || 0);
   const pb = String(b).split(/[.\-]/).map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
@@ -54,14 +55,14 @@ function compareVersionStrings(a, b) {
   return 0;
 }
 
-function firstMatch(text, re) {
+function firstMatch(text: string | null | undefined, re: RegExp): string | null {
   const m = re.exec(text || '');
   return m ? m[1] : null;
 }
 
 // ------------------------------------------------------------------ bash (msys)
-function resolveBash() {
-  const candidates = [];
+function resolveBash(): string {
+  const candidates: Array<string | null> = [];
   try {
     const out = spawnSync('where', ['bash'], { windowsHide: true, encoding: 'utf8', timeout: 8000 });
     if (out.status === 0) candidates.push(...out.stdout.split(/\r?\n/).filter(Boolean));
@@ -82,7 +83,7 @@ function resolveBash() {
 }
 
 // --------------------------------------------------------------------- node/pm
-function checkNode() {
+function checkNode(): CheckResult {
   const out = probe('node', ['--version']);
   const version = out && firstMatch(out, /^v(\d+\.\d+\.\d+)/m);
   if (!out || !version) {
@@ -103,7 +104,7 @@ function checkNode() {
   return { id: 'node', label: 'Node.js', required: true, status: 'ok', version };
 }
 
-function checkCmd(id, label, cmd, args, versionRe, hint) {
+function checkCmd(id: string, label: string, cmd: string, args: string[], versionRe: RegExp, hint: string): CheckResult {
   const out = probe(cmd, args);
   const version = out && firstMatch(out, versionRe);
   if (!out || !version) {
@@ -113,9 +114,10 @@ function checkCmd(id, label, cmd, args, versionRe, hint) {
 }
 
 // ------------------------------------------------------------------ java / jdk
-function findJavaCandidates() {
-  const dirs = [];
-  if (process.env.JAVA_HOME && fs.existsSync(process.env.JAVA_HOME)) dirs.push(process.env.JAVA_HOME);
+function findJavaCandidates(): string[] {
+  const dirs: string[] = [];
+  const javaHome = process.env.JAVA_HOME;
+  if (javaHome && fs.existsSync(javaHome)) dirs.push(javaHome);
   try {
     const out = spawnSync('where', ['java'], { windowsHide: true, encoding: 'utf8', timeout: 8000 });
     if (out.status === 0) {
@@ -133,7 +135,7 @@ function findJavaCandidates() {
     for (const vendor of vendors) dirs.push(...listDirs(path.join(root, vendor)));
     dirs.push(path.join(root, 'Android', 'Android Studio', 'jbr'));
   }
-  const seen = new Set();
+  const seen = new Set<string>();
   return dirs.filter((d) => {
     if (!d || seen.has(d.toLowerCase()) || !exists(path.join(d, 'bin', 'java.exe'))) return false;
     seen.add(d.toLowerCase());
@@ -141,7 +143,7 @@ function findJavaCandidates() {
   });
 }
 
-function checkJava() {
+function checkJava(): CheckResult {
   const candidates = findJavaCandidates();
   if (!candidates.length) {
     return {
@@ -153,11 +155,11 @@ function checkJava() {
   // Android Studio's bundled JBR is the most reliable full JDK; prefer it,
   // then JAVA_HOME / PATH order, then everything else.
   const sorted = [...candidates].sort((a, b) => {
-    const score = (d) => (/jbr$/i.test(d) ? 2 : d.toLowerCase() === String(process.env.JAVA_HOME || '').toLowerCase() ? 1 : 0);
+    const score = (d: string) => (/jbr$/i.test(d) ? 2 : d.toLowerCase() === String(process.env.JAVA_HOME || '').toLowerCase() ? 1 : 0);
     return score(b) - score(a);
   });
 
-  let best = null;
+  let best: { dir: string; version: string; hasKeytool: boolean } | null = null;
   for (const dir of sorted) {
     const java = path.join(dir, 'bin', 'java.exe');
     const out = probe(java, ['-version']);
@@ -192,13 +194,13 @@ function checkJava() {
 }
 
 // --------------------------------------------------------------- android sdk
-function findAndroidSdk() {
+function findAndroidSdk(): string | null {
   const candidates = [
     process.env.ANDROID_HOME,
     process.env.ANDROID_SDK_ROOT,
     process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Android', 'Sdk') : null,
     'C:\\Android\\Sdk',
-  ].filter(Boolean);
+  ].filter((c): c is string => !!c);
   for (const c of candidates) {
     if (
       exists(path.join(c, 'platform-tools')) ||
@@ -211,7 +213,7 @@ function findAndroidSdk() {
   return null;
 }
 
-function sdkMissing(id, label, extra) {
+function sdkMissing(id: string, label: string, extra?: string): CheckResult {
   return {
     id, label, required: true, status: 'missing',
     detail: `No Android SDK found${extra ? ` — ${extra}` : ''}.`,
@@ -219,12 +221,12 @@ function sdkMissing(id, label, extra) {
   };
 }
 
-function checkAndroidSdk(sdk) {
+function checkAndroidSdk(sdk: string | null): CheckResult {
   if (!sdk) return { ...sdkMissing('sdk', 'Android SDK'), required: true, path: null };
   return { id: 'sdk', label: 'Android SDK', required: true, status: 'ok', path: sdk, detail: sdk };
 }
 
-function checkPlatformTools(sdk) {
+function checkPlatformTools(sdk: string | null): CheckResult {
   if (!sdk) return sdkMissing('platform-tools', 'SDK platform-tools', 'platform-tools cannot be located');
   const adb = path.join(sdk, 'platform-tools', 'adb.exe');
   if (!exists(adb)) {
@@ -234,8 +236,12 @@ function checkPlatformTools(sdk) {
       hint: 'In Android Studio: SDK Manager → SDK Tools → "Android SDK Platform-Tools" (or `sdkmanager "platform-tools"`).',
     };
   }
+  // adb prints "Android Debug Bridge version 1.0.41" (protocol) and then
+  // "Version 36.0.0-…" — the second line is the platform-tools release and the
+  // one comparable against the SDK repository.
   const out = probe(adb, ['--version']);
-  const version = out && firstMatch(out, /version ([\d.]+)/);
+  const version =
+    (out && firstMatch(out, /^\s*Version (\d[\d.]*)/m)) || (out && firstMatch(out, /version ([\d.]+)/));
   return {
     id: 'platform-tools', label: 'SDK platform-tools', required: true, status: version ? 'ok' : 'warn',
     version: version || null, path: adb,
@@ -243,7 +249,7 @@ function checkPlatformTools(sdk) {
   };
 }
 
-function checkBuildTools(sdk) {
+function checkBuildTools(sdk: string | null): CheckResult {
   if (!sdk) return sdkMissing('build-tools', 'SDK build-tools', 'build-tools cannot be located');
   const roots = listDirs(path.join(sdk, 'build-tools')).sort((a, b) =>
     compareVersionStrings(path.basename(b), path.basename(a))
@@ -272,12 +278,13 @@ function checkBuildTools(sdk) {
   };
 }
 
-function checkPlatforms(sdk) {
+function checkPlatforms(sdk: string | null): CheckResult {
   if (!sdk) return sdkMissing('platforms', 'Android platform', 'platforms cannot be located');
+  // Modern platform dirs carry minor versions ("android-37.0", "android-36.1").
   const apis = listDirs(path.join(sdk, 'platforms'))
-    .map((d) => ({ dir: d, api: parseInt(firstMatch(path.basename(d), /^android-(\d+)$/) || '0', 10) }))
-    .filter((p) => p.api > 0)
-    .sort((a, b) => b.api - a.api);
+    .map((d) => ({ dir: d, ver: firstMatch(path.basename(d), /^android-(\d+(?:\.\d+)?)$/) }))
+    .filter((p): p is { dir: string; ver: string } => !!p)
+    .sort((a, b) => compareVersionStrings(b.ver, a.ver));
   if (!apis.length) {
     return {
       id: 'platforms', label: 'Android platform', required: true, status: 'missing', path: sdk,
@@ -287,12 +294,12 @@ function checkPlatforms(sdk) {
   }
   return {
     id: 'platforms', label: 'Android platform', required: true, status: 'ok',
-    version: `android-${apis[0].api}`, path: apis[0].dir,
-    detail: `android-${apis[0].api} (newest of ${apis.length} installed)`,
+    version: `android-${apis[0].ver}`, path: apis[0].dir,
+    detail: `android-${apis[0].ver} (newest of ${apis.length} installed)`,
   };
 }
 
-function checkNdk(sdk) {
+function checkNdk(sdk: string | null): CheckResult {
   if (!sdk) return sdkMissing('ndk', 'Android NDK', 'the NDK cannot be located');
   const dirs = listDirs(path.join(sdk, 'ndk')).sort((a, b) =>
     compareVersionStrings(path.basename(b), path.basename(a))
@@ -310,7 +317,7 @@ function checkNdk(sdk) {
   };
 }
 
-function checkCmake(sdk) {
+function checkCmake(sdk: string | null): CheckResult {
   if (!sdk) return sdkMissing('cmake', 'CMake (SDK)', 'CMake cannot be located');
   const dirs = listDirs(path.join(sdk, 'cmake')).sort((a, b) =>
     compareVersionStrings(path.basename(b), path.basename(a))
@@ -341,11 +348,11 @@ function checkCmake(sdk) {
 }
 
 // ----------------------------------------------------------------------- main
-function checkEnvironment({ bashPath } = {}) {
+function checkEnvironment({ bashPath }: { bashPath?: string } = {}): EnvCheckResult {
   const bash = bashPath || resolveBash();
   const sdk = findAndroidSdk();
 
-  const checks = [
+  const checks: CheckResult[] = [
     checkNode(),
     // npm ships with Node; yarn/pnpm/bun are only needed when the project's
     // lockfile matches, so they stay optional.
@@ -367,7 +374,7 @@ function checkEnvironment({ bashPath } = {}) {
   const optionalMissing = checks.filter((c) => !c.required && c.status !== 'ok');
   return {
     ok: requiredFailed.length === 0,
-    os: { platform: process.platform, arch: process.arch, release: require('os').release() },
+    os: { platform: process.platform, arch: process.arch, release: os.release() },
     requiredFailed: requiredFailed.map((c) => c.id),
     optionalMissing: optionalMissing.map((c) => c.id),
     sdk,
@@ -376,7 +383,7 @@ function checkEnvironment({ bashPath } = {}) {
   };
 }
 
-function checkBash(bashPath) {
+function checkBash(bashPath: string): CheckResult {
   const out = probe(bashPath, ['--version']);
   const version = out && firstMatch(out, /version (\d+\.\d+[\d.]*)/);
   if (!out || !version) {
@@ -389,9 +396,23 @@ function checkBash(bashPath) {
   return { id: 'bash', label: 'Git Bash', required: true, status: 'ok', version, path: bashPath };
 }
 
-module.exports = { checkEnvironment, resolveBash };
+// The individual probes are exported for sdk-updates.ts, which compares the
+// installed versions against the latest releases without re-implementing them.
+export {
+  checkEnvironment,
+  resolveBash,
+  findAndroidSdk,
+  checkNode,
+  checkJava,
+  checkPlatformTools,
+  checkBuildTools,
+  checkPlatforms,
+  checkNdk,
+  checkCmake,
+  compareVersionStrings,
+};
 
-if (require.main === module) {
-  // CLI: node lib/env-check.js
+if (require.main?.filename === __filename) {
+  // CLI: node out/lib/env-check.js
   console.log(JSON.stringify(checkEnvironment(), null, 2));
 }

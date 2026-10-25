@@ -9,15 +9,15 @@
  *   resources/icon.svg   vector master
  *
  * Pure Node: pixels come from signed-distance-field math with 4× supersampling,
- * PNG/ICO are encoded by hand (zlib + CRC32). Run: node tools/make-icons.js
+ * PNG/ICO are encoded by hand (zlib + CRC32). Run: npm run icons
  */
-const fs = require('fs');
-const path = require('path');
-const zlib = require('zlib');
+import * as fs from 'fs';
+import * as path from 'path';
+import * as zlib from 'zlib';
 
 // ── design tokens (24-unit grid, matches the in-app brand-mark) ──────────────
 const TILE_RADIUS = 5.4;
-const GRADIENT = [
+const GRADIENT: Array<[number, number, number, number]> = [
   [0.0, 0xdc, 0xc9, 0xff],
   [0.52, 0x9d, 0x75, 0xff],
   [1.0, 0x6a, 0x3e, 0xf0],
@@ -34,7 +34,7 @@ const BAR_R = 1.8;
 const SHEEN = { x: 7.2, y: 6.4, r: 14, a: 0.2 };
 
 // ── geometry helpers ──────────────────────────────────────────────────────────
-function roundedRectDist(px, py, cx, cy, hx, hy, r) {
+function roundedRectDist(px: number, py: number, cx: number, cy: number, hx: number, hy: number, r: number): number {
   const qx = Math.abs(px - cx) - (hx - r);
   const qy = Math.abs(py - cy) - (hy - r);
   const ox = Math.max(qx, 0);
@@ -42,12 +42,12 @@ function roundedRectDist(px, py, cx, cy, hx, hy, r) {
   return Math.hypot(ox, oy) + Math.min(Math.max(qx, qy), 0) - r;
 }
 
-const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 // 1 inside the shape, 0 outside; `aa` is the transition width in grid units
 // (one supersample pixel — the box downsample finishes the anti-aliasing).
-const cover = (d, aa) => clamp01(0.5 - d / aa);
+const cover = (d: number, aa: number) => clamp01(0.5 - d / aa);
 
-function gradientColor(t) {
+function gradientColor(t: number): number[] {
   let a = GRADIENT[0];
   let b = GRADIENT[GRADIENT.length - 1];
   for (let i = 0; i < GRADIENT.length - 1; i++) {
@@ -63,7 +63,7 @@ function gradientColor(t) {
 }
 
 // Color + alpha of the logo at a point on the 24-unit grid.
-function sample(u, v, aa) {
+function sample(u: number, v: number, aa: number): number[] {
   const dTile = roundedRectDist(u, v, 12, 12, 12, 12, TILE_RADIUS);
   const aTile = cover(dTile, aa);
   if (aTile <= 0) return [0, 0, 0, 0];
@@ -90,7 +90,7 @@ function sample(u, v, aa) {
 }
 
 // ── rasterizer (4× supersampling, box downsample) ────────────────────────────
-function render(size) {
+function render(size: number): Buffer {
   const SS = 4;
   const dim = size * SS;
   const aa = 24 / dim; // one supersample pixel, in 24-grid units
@@ -129,13 +129,13 @@ const CRC_TABLE = (() => {
   return t;
 })();
 
-function crc32(buf) {
+function crc32(buf: Buffer): number {
   let c = 0xffffffff;
   for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
 
-function pngChunk(type, data) {
+function pngChunk(type: string, data: Buffer): Buffer {
   const len = Buffer.alloc(4);
   len.writeUInt32BE(data.length);
   const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
@@ -144,7 +144,7 @@ function pngChunk(type, data) {
   return Buffer.concat([len, body, crc]);
 }
 
-function encodePNG(size, rgba) {
+function encodePNG(size: number, rgba: Buffer): Buffer {
   const stride = size * 4;
   const raw = Buffer.alloc((stride + 1) * size);
   for (let y = 0; y < size; y++) {
@@ -165,13 +165,13 @@ function encodePNG(size, rgba) {
 }
 
 // ── ICO packing (PNG-compressed entries, Vista+) ─────────────────────────────
-function encodeICO(pngs) {
+function encodeICO(pngs: Array<{ size: number; png: Buffer }>): Buffer {
   const header = Buffer.alloc(6);
   header.writeUInt16LE(0, 0);
   header.writeUInt16LE(1, 2); // type: icon
   header.writeUInt16LE(pngs.length, 4);
   const dirSize = 16 * pngs.length;
-  const entries = [];
+  const entries: Buffer[] = [];
   let offset = 6 + dirSize;
   for (const { size, png } of pngs) {
     const e = Buffer.alloc(16);

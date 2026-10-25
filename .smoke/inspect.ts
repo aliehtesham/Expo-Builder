@@ -1,13 +1,14 @@
-const {app, BrowserWindow} = require('electron');
-const path = require('path');
-const fs = require('fs');
+import { app, BrowserWindow } from 'electron';
+import * as path from 'path';
+import * as fs from 'fs';
+
 app.whenReady().then(async () => {
-  const w = new BrowserWindow({show:true, width:1180, height:800, webPreferences:{preload:path.join(process.cwd(),'preload.js'), contextIsolation:true}});
+  const w = new BrowserWindow({ show: true, width: 1180, height: 800, webPreferences: { preload: path.join(process.cwd(), 'out', 'preload.js'), contextIsolation: true } });
   try {
-    await w.loadFile(path.join(process.cwd(),'renderer/index.html'), {query:{demo:'1'}});
-    await new Promise(r=>setTimeout(r,1100));
-    const sleep = ms => new Promise(r=>setTimeout(r,ms));
-    const shot = async n => { await sleep(400); fs.writeFileSync(path.join(process.cwd(),'.smoke',n+'.png'), (await w.webContents.capturePage()).toPNG()); };
+    await w.loadFile(path.join(process.cwd(), 'renderer/index.html'), { query: { demo: '1' } });
+    await new Promise<void>((r) => setTimeout(r, 1100));
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    const shot = async (n: string) => { await sleep(400); fs.writeFileSync(path.join(process.cwd(), '.smoke', n + '.png'), (await w.webContents.capturePage()).toPNG()); };
     await w.webContents.executeJavaScript(`window.__demo.config(); undefined`, true);
     await sleep(700);
     await w.webContents.executeJavaScript(`document.querySelector('#seg-format').scrollIntoView({block:'center'}); undefined`, true);

@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "useUnknownInCatchVariables": false,
+    "noEmitOnError": true,
+    "rootDir": ".",
+    "outDir": ".",
+    "types": ["node"]
+  },
+  "include": ["tools/*.ts", ".smoke/*.ts", "lib/*.d.ts"],
+  "exclude": ["node_modules", "out", "renderer", "dist"]
+}

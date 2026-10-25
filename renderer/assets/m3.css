@@ -300,6 +300,41 @@ code {
 .field input.has-lead { padding-left: 46px; }
 .field.has-lead label:not(.float-label) { left: 46px; }
 
+/* ── Select fields (Advanced section) ────────────────────────────────────── */
+.field.select-field { margin-bottom: 14px; }
+
+.field select {
+  width: 100%;
+  font: 500 15px var(--font);
+  color: var(--on-surface);
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-stroke);
+  border-radius: var(--shape-l);
+  padding: 15px 44px 15px 16px;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23b3b8d0'%3E%3Cpath d='M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 22px;
+  transition: border-color var(--dur-1) var(--std), background-color var(--dur-1) var(--std),
+    box-shadow var(--dur-1) var(--std);
+}
+
+.field select:hover { background-color: rgba(255, 255, 255, 0.09); }
+
+.field select:focus {
+  border-color: var(--primary);
+  background-color: rgba(255, 255, 255, 0.085);
+  box-shadow: 0 0 0 4px rgba(160, 120, 255, 0.15);
+}
+
+.field select option {
+  background: #1c2030;
+  color: var(--on-surface);
+}
+
 .field .trail-btns {
   position: absolute;
   right: 8px; top: 8px;
@@ -308,6 +343,13 @@ code {
 }
 
 .field .trail-btns .icon-btn { width: 34px; height: 34px; }
+
+/* Password show/hide: both eye SVGs sit in the toggle button; exactly one is
+   visible at a time, swapped by the .revealed class the JS toggles. */
+[data-toggle-pass] .eye-closed { display: none; }
+[data-toggle-pass].revealed .eye-open { display: none; }
+[data-toggle-pass].revealed .eye-closed { display: block; }
+[data-toggle-pass].revealed { color: var(--primary); }
 
 .field.invalid input:is([type="text"], [type="password"]) {
   border-color: var(--error);

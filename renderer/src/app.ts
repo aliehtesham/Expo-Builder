@@ -2,10 +2,10 @@
 (() => {
   'use strict';
 
-  const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => [...document.querySelectorAll(sel)];
+  const $ = <E extends HTMLElement = HTMLElement>(sel: string): E => document.querySelector(sel) as E;
+  const $$ = <E extends HTMLElement = HTMLElement>(sel: string): E[] => Array.from(document.querySelectorAll(sel)) as E[];
 
-  const PHASES = {
+  const PHASES: Record<string, string> = {
     init: 'Starting',
     dependencies: 'Installing dependencies',
     prebuild: 'Expo prebuild',
@@ -17,17 +17,52 @@
     done: 'Completed',
   };
 
-  const state = {
+  interface ProjectEntry {
+    dir: string;
+    name: string;
+    ts: number;
+  }
+
+  interface AppState {
+    project: ProjectInfo | null;
+    appName: string | null;
+    pendingProject: ProjectInfo | null;
+    projects: ProjectEntry[];
+    page: string;
+    format: BuildFormat;
+    archs: Set<string>;
+    signed: boolean;
+    country: string;
+    relocate: boolean;
+    targetSdk: string;
+    artifacts: ArtifactInfo[];
+    keystore: KeystoreInfo | null;
+    phase: string | null;
+    lastPhase: string | null;
+    buildRunning: boolean;
+    buildCfg: BuildMetaCfg | null;
+    lastDebug: boolean;
+    /** Set when the build aborted because the keystore rejected the passwords. */
+    keyFailPath: string | null;
+    versionCodeDirty: boolean;
+    elapsedTimer?: ReturnType<typeof setInterval>;
+    buildStart: number;
+    logLines: string[];
+    stick: boolean;
+  }
+
+  const state: AppState = {
     project: null,
     appName: null,
     pendingProject: null,
     projects: [],
     page: 'select',
-    format: localStorage.getItem('ab.format') || 'apk',
+    format: (localStorage.getItem('ab.format') as BuildFormat) || 'apk',
     archs: new Set(JSON.parse(localStorage.getItem('ab.archs') || 'null') || ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64']),
     signed: (localStorage.getItem('ab.signed') ?? '1') === '1',
     country: localStorage.getItem('ab.country') || 'IR',
     relocate: (localStorage.getItem('ab.relocate') ?? '1') === '1',
+    targetSdk: localStorage.getItem('ab.targetsdk') || '',
     artifacts: [],
     keystore: null,
     phase: null,
@@ -35,15 +70,16 @@
     buildRunning: false,
     buildCfg: null,
     lastDebug: false,
+    keyFailPath: null,
     versionCodeDirty: false,
-    elapsedTimer: null,
+    elapsedTimer: undefined,
     buildStart: 0,
     logLines: [],
     stick: true,
   };
 
   // ─────────────────────────────── utilities ───────────────────────────────
-  function fmtSize(bytes) {
+  function fmtSize(bytes: number | null | undefined): string {
     if (bytes == null) return '';
     const units = ['B', 'KB', 'MB', 'GB'];
     let i = 0;
@@ -52,51 +88,51 @@
     return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`;
   }
 
-  function fmtElapsed(ms) {
+  function fmtElapsed(ms: number): string {
     const s = Math.floor(ms / 1000);
     return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   }
 
-  function fmtDate(ts) {
+  function fmtDate(ts: number): string {
     return new Date(ts).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
   }
 
-  function fmtDateTime(ts) {
+  function fmtDateTime(ts: number): string {
     const d = new Date(ts);
     return `${fmtDate(ts)}, ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
   }
 
-  const basename = (p) => String(p).split(/[\\/]/).pop();
+  const basename = (p: string) => String(p).split(/[\\/]/).pop() || '';
 
   // ───────────────────────── saved project list ────────────────────────────
   const PROJECTS_KEY = 'ab.projects';
   const PROJECTS_MAX = 30;
 
-  function loadProjects() {
+  function loadProjects(): void {
     try {
       const parsed = JSON.parse(localStorage.getItem(PROJECTS_KEY) || '[]');
-      state.projects = Array.isArray(parsed) ? parsed.filter((p) => p && p.dir) : [];
+      state.projects = Array.isArray(parsed) ? parsed.filter((p: ProjectEntry) => p && p.dir) : [];
     } catch {
       state.projects = [];
     }
   }
 
-  function saveProjects() {
+  function saveProjects(): void {
     localStorage.setItem(PROJECTS_KEY, JSON.stringify(state.projects.slice(0, PROJECTS_MAX)));
   }
 
-  function findProject(dir) {
+  function findProject(dir: string): ProjectEntry | undefined {
     const key = String(dir).toLowerCase();
     return state.projects.find((p) => p.dir.toLowerCase() === key);
   }
 
-  function upsertProject(dir, name) {
+  function upsertProject(dir: string, name: string): void {
     state.projects = state.projects.filter((p) => p.dir.toLowerCase() !== String(dir).toLowerCase());
     state.projects.unshift({ dir, name, ts: Date.now() });
     saveProjects();
   }
 
-  function removeProject(dir) {
+  function removeProject(dir: string): void {
     state.projects = state.projects.filter((p) => p.dir.toLowerCase() !== String(dir).toLowerCase());
     saveProjects();
     renderProjectsCard();
@@ -107,11 +143,11 @@
   // folder, newest first — this is the app's version control for a project.
   const BUILDS_KEY = 'ab.builds';
   const BUILDS_MAX = 50;
-  let demoBuilds = null; // smoke-test in-memory override, never touches localStorage
+  let demoBuilds: Record<string, BuildRecord[]> | null = null; // smoke-test in-memory override, never touches localStorage
 
-  const buildKey = (dir) => String(dir || '').toLowerCase();
+  const buildKey = (dir: string) => String(dir || '').toLowerCase();
 
-  function readAllBuilds() {
+  function readAllBuilds(): Record<string, BuildRecord[]> {
     if (demoBuilds) return demoBuilds;
     try {
       const parsed = JSON.parse(localStorage.getItem(BUILDS_KEY) || '{}');
@@ -121,7 +157,7 @@
     }
   }
 
-  function writeAllBuilds(all) {
+  function writeAllBuilds(all: Record<string, BuildRecord[]>): void {
     if (demoBuilds) {
       demoBuilds = all;
       return;
@@ -129,18 +165,18 @@
     localStorage.setItem(BUILDS_KEY, JSON.stringify(all));
   }
 
-  function loadBuilds(dir) {
+  function loadBuilds(dir: string): BuildRecord[] {
     const arr = readAllBuilds()[buildKey(dir)];
     return Array.isArray(arr) ? arr.filter((b) => b && b.version) : [];
   }
 
-  function persistBuilds(dir, builds) {
+  function persistBuilds(dir: string, builds: BuildRecord[]): void {
     const all = readAllBuilds();
     all[buildKey(dir)] = builds.slice(0, BUILDS_MAX);
     writeAllBuilds(all);
   }
 
-  function recordBuild(rec) {
+  function recordBuild(rec: BuildRecord): void {
     if (!rec || !rec.projectDir) return;
     const builds = loadBuilds(rec.projectDir);
     builds.unshift({ ...rec, id: `${rec.ts}-${Math.random().toString(36).slice(2, 8)}` });
@@ -148,24 +184,24 @@
     renderHistoryCard();
   }
 
-  function clearBuilds(dir) {
+  function clearBuilds(dir: string): void {
     persistBuilds(dir, []);
   }
 
-  function successfulBuilds(dir) {
+  function successfulBuilds(dir: string): BuildRecord[] {
     return loadBuilds(dir).filter((b) => b.status === 'success');
   }
 
-  function lastSuccessBuild(dir) {
+  function lastSuccessBuild(dir: string): BuildRecord | null {
     return successfulBuilds(dir)[0] || null;
   }
 
-  function findSuccessByVersion(dir, version) {
+  function findSuccessByVersion(dir: string, version: string): BuildRecord | null {
     return successfulBuilds(dir).find((b) => b.version === String(version)) || null;
   }
 
   /** Semver-ish compare of two x.y.z strings: -1 if a < b, 1 if a > b, 0 if equal. */
-  function compareVersions(a, b) {
+  function compareVersions(a: string, b: string): number {
     const pa = String(a).split('.').map(Number);
     const pb = String(b).split('.').map(Number);
     for (let i = 0; i < 3; i++) {
@@ -175,7 +211,7 @@
     return 0;
   }
 
-  function renderProjectsCard() {
+  function renderProjectsCard(): void {
     const card = $('#projects-card');
     const list = $('#projects-list');
     list.innerHTML = '';
@@ -192,7 +228,7 @@
   const CHEV_RIGHT_SVG =
     '<svg viewBox="0 0 24 24" class="icon chev"><path d="M8.59 16.59 13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>';
 
-  function projectRow(p) {
+  function projectRow(p: ProjectEntry): HTMLElement {
     const row = document.createElement('div');
     row.className = 'project-row';
 
@@ -241,8 +277,8 @@
     return row;
   }
 
-  async function openListedProject(entry) {
-    let res;
+  async function openListedProject(entry: ProjectEntry): Promise<void> {
+    let res: ValidateResult;
     try {
       res = await window.builder.validateProject(entry.dir);
     } catch (err) {
@@ -263,13 +299,13 @@
   }
 
   // ─────────────────────────── build history card (page 1) ─────────────────
-  const STATUS_BADGE = {
+  const STATUS_BADGE: Record<string, [string, string]> = {
     success: ['ok', 'success'],
     failed: ['fail', 'failed'],
     canceled: ['dim', 'canceled'],
   };
 
-  function renderHistoryCard() {
+  function renderHistoryCard(): void {
     const card = $('#history-card');
     if (!state.project) {
       card.classList.add('hidden');
@@ -293,7 +329,7 @@
     for (const b of builds) list.append(historyRow(b));
   }
 
-  function historyRow(b) {
+  function historyRow(b: BuildRecord): HTMLElement {
     const row = document.createElement('button');
     row.type = 'button';
     row.className = 'history-row';
@@ -330,19 +366,25 @@
     return row;
   }
 
-  function openHistoryDialog(b) {
+  interface FileEntry extends ArtifactInfo {
+    kind: 'apk' | 'aab' | 'jks';
+    note: string;
+  }
+
+  function openHistoryDialog(b: BuildRecord): void {
     $('#dlg-history-title').textContent = `${b.appName || 'App'} v${b.version}`;
     const statusWord = (STATUS_BADGE[b.status] || [null, b.status])[1];
     $('#dlg-history-sub').textContent =
       `Built ${fmtDateTime(b.ts)} · took ${fmtElapsed(b.durationMs || 0)} · ${statusWord}` +
       (b.debug ? ' · debug run' : '');
 
-    const meta = [
+    const meta: Array<[string, string]> = [
       ['Version', `v${b.version}`],
       ['versionCode', String(b.versionCode ?? '—')],
       ['Format', String(b.format || 'apk').toUpperCase()],
       ['Architectures', b.format === 'aab' ? '— (bundle)' : (b.archs || []).join(', ') || '—'],
       ['Signing', b.signed ? 'signed release' : 'unsigned'],
+      ['Target SDK', b.targetSdk ? `API ${b.targetSdk}` : 'Project default'],
       ['App name', b.appName || '—'],
     ];
     const dl = $('#history-meta');
@@ -357,8 +399,8 @@
 
     const files = $('#history-files');
     files.innerHTML = '';
-    const entries = [
-      ...(b.artifacts || []).map((a) => ({
+    const entries: FileEntry[] = [
+      ...(b.artifacts || []).map((a): FileEntry => ({
         ...a,
         kind: String(a.path).endsWith('.aab') ? 'aab' : 'apk',
         note: String(a.path).endsWith('.aab') ? 'Play Store bundle' : 'installable APK',
@@ -383,10 +425,10 @@
     $('#dlg-history').classList.remove('hidden');
   }
 
-  async function refreshFileExistence(build, entries, rows) {
+  async function refreshFileExistence(build: BuildRecord, entries: FileEntry[], rows: HTMLElement[]): Promise<void> {
     if (build.demo) return; // smoke-test records point at fake paths
     for (let i = 0; i < entries.length; i++) {
-      let st = { exists: true };
+      let st: StatResult = { exists: true, size: 0, mtime: 0 };
       try {
         st = await window.builder.statPath(entries[i].path);
       } catch {
@@ -397,23 +439,24 @@
         const metaEl = rows[i].querySelector('.artifact-meta');
         if (metaEl) metaEl.textContent = 'no longer on disk';
         const save = rows[i].querySelector('.actions .btn');
-        if (save) save.disabled = true;
+        if (save) (save as HTMLButtonElement).disabled = true;
       }
     }
   }
 
-  function closeHistoryDialog() {
+  function closeHistoryDialog(): void {
     $('#scrim').classList.add('hidden');
     $('#dlg-history').classList.add('hidden');
-  }  let snackTimer = null;
-  function snack(text) {
+  }
+  let snackTimer: ReturnType<typeof setTimeout> | undefined;
+  function snack(text: string): void {
     $('#snackbar-text').textContent = text;
     $('#snackbar').classList.remove('hidden');
     clearTimeout(snackTimer);
     snackTimer = setTimeout(() => $('#snackbar').classList.add('hidden'), 3200);
   }
 
-  function computeVersionCode(version) {
+  function computeVersionCode(version: string | null | undefined): string {
     const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(version || '').trim());
     if (!m) return '';
     return String(Number(m[1]) * 10000 + Number(m[2]) * 100 + Number(m[3]));
@@ -422,7 +465,7 @@
   // ──────────────────────────────── routing ────────────────────────────────
   const PAGES = ['deps', 'select', 'config', 'build', 'result'];
 
-  function setPage(id) {
+  function setPage(id: string): void {
     state.page = id;
     PAGES.forEach((p) => $(`#page-${p}`).classList.toggle('active', p === id));
     const idx = PAGES.indexOf(id) + 1;
@@ -430,26 +473,44 @@
       const n = Number(el.dataset.step);
       el.classList.toggle('active', n === idx);
       el.classList.toggle('done', n < idx);
-      el.querySelector('.step-dot').textContent = n < idx ? '✓' : n;
+      el.querySelector('.step-dot')!.textContent = n < idx ? '✓' : String(n);
     });
-    $('#main .page.active').scrollTop = 0;
+    ($('#main .page.active') as HTMLElement).scrollTop = 0;
   }
 
   // ───────────────────────── page 0 · environment ──────────────────────────
   const isDemo = () => new URLSearchParams(location.search).has('demo');
 
-  const ENV_ICONS = {
+  const ENV_ICONS: Record<string, string> = {
     ok: '<svg viewBox="0 0 24 24" class="icon"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>',
     missing:
       '<svg viewBox="0 0 24 24" class="icon"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>',
     warn: '<svg viewBox="0 0 24 24" class="icon"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>',
   };
 
-  let envState = { checks: [], checking: true, ok: false, optionalMissing: [] };
+  /** A check row, or the placeholder row shown with spinners while probing. */
+  type EnvRow = Omit<Partial<CheckResult>, 'status' | 'label'> & { label: string; status: string };
+
+  interface EnvState extends EnvCheckResult {
+    checking: boolean;
+    /** Newest-release info per dependency (null = check failed / not run). */
+    updates: UpdatesResult | null;
+    updatesBusy: boolean;
+  }
+
+  const freshEnvBase = () => ({
+    checks: [] as CheckResult[], ok: false, optionalMissing: [] as string[], requiredFailed: [] as string[],
+    os: { platform: '', arch: '', release: '' }, sdk: null as string | null, bash: '',
+  });
+
+  let envState: EnvState = {
+    ...freshEnvBase(), checking: true, updates: null, updatesBusy: true,
+  };
 
   /** Mock result set for the smoke screenshots (never touches the real probes). */
-  function demoEnvResults(withMissing) {
-    const mk = (id, label, required, status, version, detail, hint) => ({ id, label, required, status, version, detail, hint });
+  function demoEnvResults(withMissing: boolean): EnvCheckResult {
+    const mk = (id: string, label: string, required: boolean, status: CheckStatus, version: string | null = null, detail?: string, hint?: string): CheckResult =>
+      ({ id, label, required, status, version, detail, hint });
     const good = [
       mk('node', 'Node.js', true, 'ok', 'v22.14.0'),
       mk('npm', 'npm', false, 'ok', '10.9.2'),
@@ -459,8 +520,8 @@
       mk('bash', 'Git Bash', true, 'ok', '5.2.37', 'C:\\Program Files\\Git\\usr\\bin\\bash.exe'),
       mk('jdk', 'Java JDK (17+)', true, 'ok', '17.0.16', 'F:\\Tools\\jdk-17.0.16'),
       mk('sdk', 'Android SDK', true, 'ok', null, 'F:\\Tools\\AndroidSDK'),
-      mk('platform-tools', 'SDK platform-tools', true, 'ok', '1.0.41', 'F:\\Tools\\AndroidSDK\\platform-tools\\adb.exe'),
-      mk('build-tools', 'SDK build-tools', true, 'ok', '35.0.0', 'F:\\Tools\\AndroidSDK\\build-tools\\35.0.0'),
+      mk('platform-tools', 'SDK platform-tools', true, 'ok', '36.0.0', 'F:\\Tools\\AndroidSDK\\platform-tools\\adb.exe'),
+      mk('build-tools', 'SDK build-tools', true, 'ok', '37.0.0', 'F:\\Tools\\AndroidSDK\\build-tools\\37.0.0'),
       mk('platforms', 'Android platform', true, 'ok', 'android-36', 'android-36 (newest of 2 installed)'),
       mk('ndk', 'Android NDK', true, withMissing ? 'missing' : 'ok', withMissing ? null : '27.1.12297006', withMissing ? 'F:\\Tools\\AndroidSDK\\ndk has no NDK installations.' : undefined),
       mk('cmake', 'CMake (SDK)', true, withMissing ? 'missing' : 'ok', withMissing ? null : '3.31.6', withMissing ? 'F:\\Tools\\AndroidSDK\\cmake has no CMake installations.' : undefined),
@@ -476,28 +537,75 @@
     };
   }
 
-  function applyEnvResults(res) {
-    envState = { ...res, checking: false };
-    renderEnvChecks();
+  /** Mock newest-release data matching demoEnvResults (real values, 2026-10). */
+  function demoUpdates(): UpdatesResult {
+    const mk = (id: string, label: string, current: string | null, latest: string | null, preview: string | null, source: string): DepUpdateInfo =>
+      ({ id, label, current, latest, preview, newer: !!(current && latest && current !== latest), source, error: null });
+    return {
+      when: Date.now(),
+      deps: [
+        mk('platform-tools', 'SDK platform-tools', '36.0.0', '37.0.1', null, 'dl.google.com · repository2-3.xml'),
+        mk('build-tools', 'SDK build-tools', '37.0.0', '37.0.0', '37.0.0-rc2', 'dl.google.com · repository2-3.xml'),
+        mk('platforms', 'Android platform', 'android-36', 'android-37.2', null, 'dl.google.com · repository2-3.xml'),
+        mk('ndk', 'Android NDK', '27.1.12297006', '30.0.16248370', '30.0.16138531', 'dl.google.com · repository2-3.xml'),
+        mk('cmake', 'CMake (SDK)', '3.31.6', '4.1.2', null, 'dl.google.com · repository2-3.xml'),
+        mk('node', 'Node.js', '22.14.0', '24.22.0', null, 'nodejs.org · LTS'),
+        mk('jdk', 'Java JDK (17+)', '17.0.16', '21.0.12', null, 'adoptium.net · Temurin 21 LTS'),
+      ],
+    };
   }
 
-  async function runEnvCheck() {
-    envState = { checks: [], checking: true, ok: false, optionalMissing: [] };
-    $('#btn-env-continue').disabled = true;
+  function applyEnvResults(res: EnvCheckResult): void {
+    envState = { ...res, checking: false, updates: null, updatesBusy: true };
+    renderEnvChecks();
+    // Newest-release detection starts only after the local probes are done so
+    // the rows paint instantly; the "…available" chips appear when the (slower,
+    // online) version check lands.
+    if (isDemo()) {
+      envState.updates = demoUpdates();
+      envState.updatesBusy = false;
+      renderEnvChecks();
+    } else {
+      void loadUpdates(true);
+    }
+  }
+
+  async function loadUpdates(force = false): Promise<void> {
+    try {
+      envState.updates = await window.builder.checkUpdates(force);
+    } catch {
+      envState.updates = null;
+    } finally {
+      envState.updatesBusy = false;
+      renderEnvChecks();
+    }
+  }
+
+  async function runEnvCheck(): Promise<void> {
+    envState = {
+      checks: [], checking: true, ok: false, optionalMissing: [], requiredFailed: [],
+      os: { platform: '', arch: '', release: '' }, sdk: null, bash: '',
+      updates: null, updatesBusy: true,
+    };
+    $<HTMLButtonElement>('#btn-env-continue').disabled = true;
     $('#env-summary').textContent = 'Checking your machine…';
     $('#env-summary-info').textContent = 'Running the checks…';
     renderEnvChecks();
 
-    let res;
+    let res: EnvCheckResult;
     try {
       res = isDemo() ? demoEnvResults(false) : await window.builder.checkEnvironment();
     } catch (err) {
-      res = { ok: false, checks: [], requiredFailed: [], optionalMissing: [], fatal: String(err) };
+      res = {
+        ok: false, checks: [], requiredFailed: [], optionalMissing: [],
+        os: { platform: '', arch: '', release: '' }, sdk: null, bash: '',
+        fatal: String(err),
+      };
     }
     applyEnvResults(res);
   }
 
-  function envRow(c) {
+  function envRow(c: EnvRow): HTMLElement {
     // A missing optional tool (yarn/pnpm/bun) is informational, not an error.
     const optMissing = !c.required && c.status === 'missing';
     const cls = optMissing ? 'opt-missing' : c.status;
@@ -539,24 +647,46 @@
     version.className = `env-version mono ${cls}`;
     version.textContent = envState.checking ? '…' : c.status === 'ok' ? c.version || 'installed' : c.status === 'warn' ? c.version || 'check' : 'not found';
 
-    row.append(status, info, version);
+    // Newest-release chip: only for detected (ok/warn) rows whose latest stable
+    // release is newer than what is installed. Missing rows already carry a
+    // fix hint — a version chip there would be noise.
+    const verBlock = document.createElement('div');
+    verBlock.className = 'env-version-block';
+    verBlock.append(version);
+    const upd = envState.updates && !envState.checking && c.status !== 'missing'
+      ? envState.updates.deps.find((d) => d.id === c.id)
+      : undefined;
+    if (upd && upd.newer) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'ver-chip';
+      chip.title = 'A newer stable release is available — click for details';
+      chip.innerHTML =
+        '<svg viewBox="0 0 24 24" class="icon"><path d="M12 4l-5 5 1.41 1.41L11 7.83V16h2V7.83l2.59 2.58L17 9zm-7 14h14v2H5z"/></svg>' +
+        `<span>${upd.latest}</span>`;
+      chip.addEventListener('click', () => openVersionDialog(upd));
+      verBlock.append(chip);
+    }
+
+    row.append(status, info, verBlock);
     return row;
   }
 
-  function renderEnvChecks() {
+  function renderEnvChecks(): void {
     const list = $('#env-list');
     list.innerHTML = '';
     // While probing, show the expected tool list with spinners so the card
     // doesn't collapse into nothing.
-    const checks = envState.checking
+    const checks: EnvRow[] = envState.checking
       ? ['Node.js', 'npm', 'Yarn', 'pnpm', 'Bun', 'Git Bash', 'Java JDK (17+)', 'Android SDK', 'SDK platform-tools', 'SDK build-tools', 'Android platform', 'Android NDK', 'CMake (SDK)'].map((label) => ({ label, status: 'checking' }))
       : envState.checks || [];
     for (const c of checks) list.append(envRow(c));
+    renderUpdatesStatus();
 
     if (envState.checking) {
       $('#env-summary').textContent = 'Checking your machine…';
       $('#env-summary-info').textContent = 'Running the checks…';
-      $('#btn-env-continue').disabled = true;
+      $<HTMLButtonElement>('#btn-env-continue').disabled = true;
       return;
     }
 
@@ -568,14 +698,14 @@
     if (envState.fatal) {
       $('#env-summary').textContent = 'Check failed';
       $('#env-summary-info').textContent = `The check itself failed: ${envState.fatal}`;
-      $('#btn-env-continue').disabled = true;
+      $<HTMLButtonElement>('#btn-env-continue').disabled = true;
       return;
     }
 
     const allOk = failedRequired.length === 0;
-    $('#btn-env-continue').disabled = !allOk;
+    $<HTMLButtonElement>('#btn-env-continue').disabled = !allOk;
 
-    let summary;
+    let summary: string;
     if (allOk) {
       summary = warned.length
         ? `${passed}/${checks.length} passed · ${warned.length} need${warned.length === 1 ? 's' : ''} attention`
@@ -585,8 +715,8 @@
     }
     $('#env-summary').textContent = summary;
 
-    const names = (arr) => arr.map((c) => c.label.replace(' (optional)', '')).join(', ');
-    let infoText;
+    const names = (arr: EnvRow[]) => arr.map((c) => c.label.replace(' (optional)', '')).join(', ');
+    let infoText: string;
     if (!allOk) {
       infoText = `Install ${names(failedRequired)} — Continue unlocks once every required tool is detected.`;
     } else if (missingOptional.length) {
@@ -597,19 +727,229 @@
     $('#env-summary-info').textContent = infoText;
   }
 
+  /** One-line "newer versions" status under the deps card title. */
+  function renderUpdatesStatus(): void {
+    const box = $('#env-updates');
+    const status = $('#env-updates-status');
+    if (!box || !status) return;
+    box.classList.remove('busy', 'has-new', 'all-ok', 'failed');
+
+    if (envState.checking || envState.updatesBusy) {
+      box.classList.add('busy');
+      status.textContent = 'Checking for newer versions…';
+      return;
+    }
+    if (!envState.updates) {
+      box.classList.add('failed');
+      status.textContent = 'Newer-version check unavailable — offline, blocked, or no sources reached.';
+      return;
+    }
+    const n = envState.updates.deps.filter((d) => d.newer).length;
+    if (n > 0) {
+      box.classList.add('has-new');
+      status.textContent = `${n} newer stable release${n === 1 ? '' : 's'} available — click a version chip for details`;
+    } else {
+      box.classList.add('all-ok');
+      status.textContent = 'Every dependency is on the newest stable release it can use.';
+    }
+  }
+
+  // ───────────────── newer-version dialog (read-only info) ─────────────────
+  const UPGRADE_HINTS: Record<string, string> = {
+    'platform-tools': 'sdk',
+    'build-tools': 'sdk',
+    platforms: 'sdk',
+    ndk: 'sdk',
+    cmake: 'sdk',
+    node: 'Download the LTS installer from nodejs.org, run it, and reopen Expo Builder.',
+    jdk: 'Install Temurin JDK 21 LTS from adoptium.net and point JAVA_HOME at it (Android Studio\'s bundled JDK is detected automatically too).',
+  };
+
+  function sdkPkgOf(upd: DepUpdateInfo): string {
+    // platform-tools has no version in its package path; platforms uses the
+    // full "android-XX[.Y]" suffix as the version.
+    return upd.id === 'platform-tools' ? 'platform-tools' : `${upd.id};${upd.latest}`;
+  }
+
+  function openVersionDialog(upd: DepUpdateInfo): void {
+    dialogUpd = upd;
+    const isSdk = UPGRADE_HINTS[upd.id] === 'sdk';
+    $('#dlg-version-title').textContent = upd.label;
+    $('#dlg-version-sub').textContent = upd.newer
+      ? isSdk
+        ? 'A newer stable release is available — your installed version keeps working, and SDK components install side-by-side.'
+        : 'A newer stable release is available — the official installer will be downloaded and opened for you.'
+      : 'Release information for this dependency.';
+
+    const meta = $('#dlg-version-meta');
+    meta.innerHTML = '';
+    const row = (k: string, v: string) => {
+      const r = document.createElement('div');
+      r.className = 'ver-row';
+      const key = document.createElement('span');
+      key.className = 'k';
+      key.textContent = k;
+      const val = document.createElement('span');
+      val.className = 'v mono';
+      val.textContent = v;
+      r.append(key, val);
+      meta.append(r);
+    };
+    row('Installed', upd.current || 'not detected');
+    row('Latest stable', upd.latest || 'unknown');
+    if (upd.preview) row('Preview channel', `${upd.preview} — not recommended for release builds`);
+    row('Checked against', upd.source || upd.error || '—');
+
+    const cmd = $('#dlg-version-cmd');
+    cmd.classList.toggle('hidden', !isSdk || !upd.latest);
+    if (isSdk && upd.latest) cmd.textContent = `sdkmanager "${sdkPkgOf(upd)}"`;
+
+    $('#dlg-version-hint').textContent = isSdk
+      ? 'Install it from Android Studio → SDK Manager (SDK Tools / SDK Platforms), or right here: Update now runs the same sdkmanager install with progress and cancel.'
+      : UPGRADE_HINTS[upd.id] || '';
+    $('#dlg-version-disclaimer').innerHTML = isSdk
+      ? 'SDK components install side-by-side through Google\'s <code>sdkmanager</code> — your current version stays usable the whole time.'
+      : 'The official installer is downloaded into your Downloads folder and opened — nothing is installed silently.';
+
+    // Fresh dialog: info mode.
+    $('#dlg-version-progress').classList.add('hidden');
+    $('#btn-install-update').classList.toggle('hidden', !upd.newer || !upd.latest);
+    $('#scrim').classList.remove('hidden');
+    $('#dlg-version').classList.remove('hidden');
+  }
+
+  function closeVersionDialog(): void {
+    if (installState.running) {
+      snack('An update is running — cancel it first.');
+      return;
+    }
+    $('#scrim').classList.add('hidden');
+    $('#dlg-version').classList.add('hidden');
+  }
+
+  // ───────────────────── update action (download + install) ─────────────────
+  const PHASE_TEXT: Record<string, string> = {
+    license: 'Accepting SDK licenses…',
+    download: 'Downloading…',
+    install: 'Downloading & installing…',
+  };
+
+  let dialogUpd: DepUpdateInfo | null = null;
+  let installState: { running: boolean; kind: 'sdk' | 'installer' | null; failed: boolean } = {
+    running: false, kind: null, failed: false,
+  };
+
+  function enterInstallMode(kind: 'sdk' | 'installer'): void {
+    installState = { running: true, kind, failed: false };
+    // Collapse info-only blocks so the progress view always fits the window.
+    $('#dlg-version-cmd').classList.add('hidden');
+    $('#dlg-version-hint').classList.add('hidden');
+    $('#dlg-version-progress').classList.remove('hidden');
+    $('#btn-install-update').classList.add('hidden');
+    $('#dlg-version-phase').textContent = 'Preparing…';
+    $('#dlg-version-pct').textContent = '—';
+    $('#dlg-version-bar').style.width = '0%';
+    $('#dlg-version-bar').classList.remove('done', 'failed');
+    $('#dlg-version-bar').classList.toggle('ind', kind === 'sdk'); // indeterminate until sdkmanager reports %
+    $('#dlg-version-log').innerHTML = '';
+    $('#dlg-version-log').classList.add('hidden');
+    $('#btn-install-cancel').classList.remove('hidden');
+    $('#btn-version-close').classList.add('hidden');
+  }
+
+  function setInstallProgress(percent: number | null, text: string): void {
+    const bar = $('#dlg-version-bar');
+    bar.classList.remove('ind');
+    if (percent == null) {
+      bar.classList.add('ind');
+      $('#dlg-version-pct').textContent = text || '…';
+    } else {
+      bar.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+      $('#dlg-version-pct').textContent = `${percent}%`;
+    }
+    if (text) $('#dlg-version-phase').textContent = text.length > 64 ? text.slice(0, 64) + '…' : text;
+  }
+
+  function appendInstallLog(text: string): void {
+    const log = $('#dlg-version-log');
+    log.classList.remove('hidden');
+    const line = document.createElement('div');
+    line.textContent = text;
+    log.append(line);
+    while (log.childElementCount > 6) log.firstElementChild!.remove();
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function finishInstall(ok: boolean, message: string): void {
+    installState.running = false;
+    const bar = $('#dlg-version-bar');
+    bar.classList.remove('ind');
+    bar.classList.toggle('done', ok);
+    bar.classList.toggle('failed', !ok);
+    if (ok) bar.style.width = '100%';
+    $('#dlg-version-phase').textContent = message;
+    $('#dlg-version-pct').textContent = ok ? '✓' : '✕';
+    $('#btn-install-cancel').classList.add('hidden');
+    $('#btn-version-close').classList.remove('hidden');
+    // Bring the info blocks back now that height allows it again.
+    const isSdk = dialogUpd ? UPGRADE_HINTS[dialogUpd.id] === 'sdk' : false;
+    $('#dlg-version-cmd').classList.toggle('hidden', !isSdk || !(dialogUpd && dialogUpd.latest));
+    $('#dlg-version-hint').classList.remove('hidden');
+  }
+
+  function onUpdateEvent(evt: UpdateEvent): void {
+    if (!dialogUpd) return;
+    if (evt.type === 'phase') {
+      $('#dlg-version-phase').textContent = PHASE_TEXT[evt.id] || 'Working…';
+    } else if (evt.type === 'progress') {
+      setInstallProgress(evt.percent, evt.text);
+    } else if (evt.type === 'line') {
+      appendInstallLog(evt.text);
+    } else if (evt.type === 'installer-launched') {
+      $('#dlg-version-phase').textContent = 'Installer downloaded and opened — finish the setup wizard.';
+    } else if (evt.type === 'exit') {
+      if (evt.canceled) {
+        finishInstall(false, 'Update canceled.');
+        snack('Update canceled.');
+      } else if (evt.code === 0) {
+        finishInstall(true, installState.kind === 'installer' ? 'Installer opened — finish the wizard, then use Check again.' : 'Installed. Re-checking your tools…');
+        snack(`${dialogUpd.label}: update finished.`);
+        void runEnvCheck();
+      } else {
+        finishInstall(false, 'Update failed — see the log above.');
+        snack(`${dialogUpd.label}: update failed.`);
+      }
+    }
+  }
+
+  async function startInstall(): Promise<void> {
+    const upd = dialogUpd;
+    if (!upd || !upd.latest || installState.running) return;
+    if (isDemo()) {
+      snack('Demo mode — installs are disabled.');
+      return;
+    }
+    const res = await window.builder.installUpdate(upd.id, upd.latest);
+    if (!res.ok) {
+      snack(res.error);
+      return;
+    }
+    enterInstallMode(res.kind);
+  }
+
   // ─────────────────────────────── page 1 ──────────────────────────────────
-  async function pickDirectory() {
+  async function pickDirectory(): Promise<void> {
     const dir = await window.builder.selectDirectory();
     if (!dir) return;
     await validateAndShow(dir);
   }
 
-  async function validateAndShow(dir) {
+  async function validateAndShow(dir: string): Promise<void> {
     $('#project-error').classList.add('hidden');
     $('#project-card').classList.add('hidden');
     $('#select-card').classList.add('selecting');
 
-    let res;
+    let res: ValidateResult;
     try {
       res = await window.builder.validateProject(dir);
     } catch (err) {
@@ -628,34 +968,35 @@
     openNameDialog(res.info);
   }
 
-  function openNameDialog(info) {
+  function openNameDialog(info: ProjectInfo): void {
     const saved = findProject(info.dir);
-    $('#field-projectname').value = saved ? saved.name : (info.name || '');
+    $<HTMLInputElement>('#field-projectname').value = saved ? saved.name : (info.name || '');
     clearError('projectname');
     $('#dlg-name-dir').textContent = info.dir;
     $('#scrim').classList.remove('hidden');
     $('#dlg-name').classList.remove('hidden');
     setTimeout(() => {
-      const input = $('#field-projectname');
+      const input = $<HTMLInputElement>('#field-projectname');
       input.focus();
       input.select();
     }, 40);
   }
 
-  function closeNameDialog() {
+  function closeNameDialog(): void {
     $('#scrim').classList.add('hidden');
     $('#dlg-name').classList.add('hidden');
   }
 
-  function confirmProjectName() {
-    const name = $('#field-projectname').value.trim();
+  function confirmProjectName(): void {
+    const name = $<HTMLInputElement>('#field-projectname').value.trim();
     if (!name) {
       setError('projectname', 'A project name is required.');
-      $('#field-projectname').focus();
+      $<HTMLInputElement>('#field-projectname').focus();
       return;
     }
     const info = state.pendingProject;
     state.pendingProject = null;
+    if (!info) return;
     closeNameDialog();
     state.appName = name;
     state.project = info;
@@ -666,19 +1007,19 @@
     $('#select-card').classList.remove('selecting');
   }
 
-  function cancelProjectName() {
+  function cancelProjectName(): void {
     state.pendingProject = null;
     closeNameDialog();
     $('#select-card').classList.remove('selecting');
   }
 
-  function renderProjectCard(info) {
+  function renderProjectCard(info: ProjectInfo): void {
     const display = state.appName || info.name;
     $('#project-avatar').textContent = (display || '?').trim().charAt(0).toUpperCase();
     $('#project-name').textContent = display;
     $('#project-dir').textContent = info.dir;
 
-    const meta = [
+    const meta: Array<[string, string]> = [
       ['App name', display],
       ['Detected name', info.name],
       ['Version', `${info.version}  (code ${info.versionCode})`],
@@ -707,7 +1048,7 @@
     renderHistoryCard();
   }
 
-  function repick() {
+  function repick(): void {
     $('#project-card').classList.add('hidden');
     $('#select-card').classList.remove('hidden');
     state.project = null;
@@ -716,7 +1057,7 @@
     renderHistoryCard();
   }
 
-  function goToConfig() {
+  function goToConfig(): void {
     if (!state.project) return;
     prefillForm(state.project);
     $('#config-project-label').textContent = `${state.appName || state.project.name} — ${state.project.dir}`;
@@ -738,16 +1079,140 @@
     }
     setPage('config');
     updateSummary();
+    // Saved signing passwords: unlock with Windows Hello and autofill, and
+    // sync the forget-button visibility with what the vault holds.
+    unlockVault();
+    refreshVaultUI();
+  }
+
+  // ─────────────────── encrypted signing-password vault ──────────────────────
+  // Generated or typed signing passwords are saved encrypted (Windows DPAPI,
+  // per project) whenever they are applied or a build starts. Opening the form
+  // again asks for Windows Hello (fingerprint / PIN / face) and autofills.
+
+  const vaultFields = ['keypass', 'storepass'] as const;
+  type VaultField = (typeof vaultFields)[number];
+
+  const vaultInput = (field: VaultField) => $<HTMLInputElement>(`#field-${field}`);
+
+  async function refreshVaultUI(): Promise<void> {
+    const forgetBtn = $('#btn-vault-forget');
+    if (!state.project || isDemo()) {
+      forgetBtn.classList.add('hidden');
+      return;
+    }
+    try {
+      const st = await window.builder.secretStatus(state.project.dir);
+      forgetBtn.classList.toggle('hidden', !st.has);
+    } catch {
+      forgetBtn.classList.add('hidden');
+    }
+  }
+
+  async function saveSecrets(fields: readonly VaultField[]): Promise<void> {
+    if (!state.project || isDemo()) return;
+    const secrets: VaultSecrets = {};
+    for (const f of fields) {
+      const v = vaultInput(f).value;
+      if (v) secrets[f] = v;
+    }
+    if (!Object.keys(secrets).length) return;
+    try {
+      await window.builder.saveSecrets(state.project.dir, secrets);
+      $('#btn-vault-forget').classList.remove('hidden');
+    } catch {
+      /* the vault is a convenience — never block a build over it */
+    }
+  }
+
+  // ── Windows Hello unlock overlay ────────────────────────────────────────
+  // While the OS consent prompt is on screen the whole app freezes behind a
+  // blurred layer; it fades away on pass/fail/cancel. A short grace period
+  // before showing keeps quick outcomes (Hello not configured, probe errors)
+  // from ever flashing the overlay.
+  let vaultAuthCanceled = false;
+  let vaultAuthShowTimer: ReturnType<typeof setTimeout> | undefined;
+  let vaultAuthHideTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function showVaultAuth(): void {
+    const el = $('#vault-auth');
+    clearTimeout(vaultAuthHideTimer);
+    el.classList.remove('hidden');
+    // Next frame so the opacity transition runs from 0.
+    requestAnimationFrame(() => el.classList.add('show'));
+    $('#main').inert = true;
+    $('.topbar').inert = true;
+    // Keyboard users get Cancel focused; the OS consent prompt reclaims
+    // foreground focus right after anyway.
+    $('#btn-vault-cancel').focus();
+  }
+
+  function hideVaultAuth(): void {
+    clearTimeout(vaultAuthShowTimer);
+    const el = $('#vault-auth');
+    if (el.classList.contains('hidden')) return;
+    el.classList.remove('show');
+    $('#main').inert = false;
+    $('.topbar').inert = false;
+    clearTimeout(vaultAuthHideTimer);
+    vaultAuthHideTimer = setTimeout(() => el.classList.add('hidden'), 300);
+  }
+
+  async function unlockVault({ manual = false }: { manual?: boolean } = {}): Promise<void> {
+    if (!state.project || isDemo()) return;
+    vaultAuthCanceled = false;
+    let res: VaultLoadResult;
+    try {
+      res = await window.builder.loadSecrets(state.project.dir);
+    } catch {
+      hideVaultAuth();
+      return;
+    }
+    hideVaultAuth();
+    if (!res.ok) {
+      if (res.reason === 'denied' && vaultAuthCanceled) {
+        snack('Unlock canceled — the saved passwords stay locked.');
+        return;
+      }
+      if (manual || res.reason === 'denied') {
+        const msgs: Record<Extract<VaultLoadResult, { ok: false }>['reason'], string> = {
+          empty: 'No passwords saved for this project yet.',
+          denied: 'Locked — Windows Hello did not verify.',
+          'no-encryption': 'Windows refused to decrypt the saved passwords.',
+          corrupt: 'Saved passwords could not be decrypted — forget them and re-enter.',
+        };
+        snack(msgs[res.reason]);
+      }
+      return;
+    }
+    for (const f of vaultFields) {
+      const v = res.secrets[f];
+      if (!v) continue;
+      const input = vaultInput(f);
+      input.value = v;
+      input.dispatchEvent(new Event('input'));
+      // Flash the field so the (dotted) value landing is visible.
+      const wrap = input.closest<HTMLElement>('.field');
+      if (wrap) {
+        wrap.classList.remove('vault-filled');
+        void wrap.offsetWidth; // restart the animation
+        wrap.classList.add('vault-filled');
+        setTimeout(() => wrap.classList.remove('vault-filled'), 1800);
+      }
+    }
+    if (res.auth === 'verified') snack('Saved passwords unlocked with Windows Hello.');
+    else if (res.auth === 'unavailable') snack('Filled from the encrypted vault — Windows Hello is not set up on this PC.');
+    else snack('Filled saved passwords.');
   }
 
   // ─────────────────────────────── page 2 ──────────────────────────────────
-  function prefillForm(info) {
-    $('#field-version').value = info.version;
+  function prefillForm(info: ProjectInfo): void {
+    $<HTMLInputElement>('#field-version').value = info.version;
     state.versionCodeDirty = false;
-    $('#field-versioncode').value = info.versionCode || computeVersionCode(info.version);
+    $<HTMLInputElement>('#field-versioncode').value = String(info.versionCode || computeVersionCode(info.version));
     if (info.hasPersistentKey) {
       // Suggest an alias derived from the project so keys stay distinguishable.
-      if (!$('#field-alias').value) $('#field-alias').value = `${(info.slug || 'app').toLowerCase()}.release`;
+      if (!$<HTMLInputElement>('#field-alias').value) $<HTMLInputElement>('#field-alias').value = `${(info.slug || 'app').toLowerCase()}.release`;
     }
     clearAllErrors();
     updateVersionWarnings();
@@ -756,7 +1221,7 @@
   // Live version-field warnings from the project's build history:
   // rebuilding a version replaces its previous files, and going lower than the
   // last built version can block updates for installed users.
-  function updateVersionWarnings() {
+  function updateVersionWarnings(): void {
     const box = $('#version-warn');
     const list = $('#version-warn-list');
     list.innerHTML = '';
@@ -764,14 +1229,14 @@
       box.classList.add('hidden');
       return;
     }
-    const version = $('#field-version').value.trim();
+    const version = $<HTMLInputElement>('#field-version').value.trim();
     if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(version)) {
       box.classList.add('hidden');
       return;
     }
     const prev = findSuccessByVersion(state.project.dir, version);
     const last = lastSuccessBuild(state.project.dir);
-    const lines = [];
+    const lines: string[] = [];
     if (prev) {
       lines.push(`v${version} was already built (${fmtDate(prev.ts)}) — building the same version again replaces that build's output files.`);
     }
@@ -790,11 +1255,11 @@
     box.classList.remove('hidden');
   }
 
-  function initForm() {
+  function initForm(): void {
     // Format segmented control
     const seg = $('#seg-format');
-    const setFormat = (fmt) => {
-      state.format = fmt;
+    const setFormat = (fmt: string) => {
+      state.format = fmt as BuildFormat;
       localStorage.setItem('ab.format', fmt);
       seg.dataset.active = fmt === 'aab' ? '1' : '0';
       $$('#seg-format .seg-option').forEach((o) => {
@@ -807,20 +1272,21 @@
       clearError('archs');
     };
     $$('#seg-format .seg-option').forEach((o) =>
-      o.addEventListener('click', () => setFormat(o.dataset.value))
+      o.addEventListener('click', () => setFormat(o.dataset.value || ''))
     );
     setFormat(state.format);
 
     // Arch chips
     const renderChips = () => {
       $$('#arch-chips .chip').forEach((c) => {
-        c.classList.toggle('selected', state.archs.has(c.dataset.arch));
+        c.classList.toggle('selected', !!c.dataset.arch && state.archs.has(c.dataset.arch));
         updateSummary();
       });
     };
     $$('#arch-chips .chip').forEach((c) =>
       c.addEventListener('click', () => {
         const a = c.dataset.arch;
+        if (!a) return;
         if (state.archs.has(a)) state.archs.delete(a);
         else state.archs.add(a);
         localStorage.setItem('ab.archs', JSON.stringify([...state.archs]));
@@ -831,7 +1297,7 @@
     renderChips();
 
     // Signed checkbox
-    const signedInput = $('#field-signed');
+    const signedInput = $<HTMLInputElement>('#field-signed');
     const syncSigned = () => {
       state.signed = signedInput.checked;
       localStorage.setItem('ab.signed', state.signed ? '1' : '0');
@@ -845,7 +1311,7 @@
     syncSigned();
 
     // Relocate checkbox
-    const relocateInput = $('#field-relocate');
+    const relocateInput = $<HTMLInputElement>('#field-relocate');
     relocateInput.addEventListener('change', () => {
       state.relocate = relocateInput.checked;
       localStorage.setItem('ab.relocate', state.relocate ? '1' : '0');
@@ -854,28 +1320,44 @@
     relocateInput.checked = state.relocate;
     $('#relocate-checkbox').classList.toggle('on', state.relocate);
 
+    // Target SDK select (Advanced)
+    const sdkSelect = $<HTMLSelectElement>('#field-targetsdk');
+    sdkSelect.addEventListener('change', () => {
+      state.targetSdk = sdkSelect.value;
+      localStorage.setItem('ab.targetsdk', state.targetSdk);
+      updateSummary();
+    });
+    sdkSelect.value = state.targetSdk;
+    if (sdkSelect.value !== state.targetSdk) {
+      // Stored level is no longer in the list — fall back to the default.
+      state.targetSdk = '';
+      localStorage.removeItem('ab.targetsdk');
+    }
+
     // Version ↔ versionCode sync
-    $('#field-version').addEventListener('input', () => {
+    $<HTMLInputElement>('#field-version').addEventListener('input', () => {
       state.versionCodeDirty = false;
-      $('#field-versioncode').value = computeVersionCode($('#field-version').value);
+      $<HTMLInputElement>('#field-versioncode').value = computeVersionCode($<HTMLInputElement>('#field-version').value);
       clearError('version');
       clearError('versioncode');
       updateVersionWarnings();
       updateSummary();
     });
-    $('#field-versioncode').addEventListener('input', () => {
+    $<HTMLInputElement>('#field-versioncode').addEventListener('input', () => {
       state.versionCodeDirty = true;
       clearError('versioncode');
       updateSummary();
     });
-    $('#field-alias').addEventListener('input', () => clearError('alias'));
-    $('#field-keypass').addEventListener('input', () => clearError('keypass'));
-    $('#field-storepass').addEventListener('input', () => clearError('storepass'));
+    $<HTMLInputElement>('#field-alias').addEventListener('input', () => clearError('alias'));
+    $<HTMLInputElement>('#field-keypass').addEventListener('input', () => clearError('keypass'));
+    $<HTMLInputElement>('#field-storepass').addEventListener('input', () => clearError('storepass'));
 
     // Password visibility toggles
     $$('[data-toggle-pass]').forEach((btn) =>
       btn.addEventListener('click', () => {
-        const input = document.getElementById(btn.dataset.togglePass);
+        const id = btn.dataset.togglePass;
+        const input = id ? document.getElementById(id) : null;
+        if (!(input instanceof HTMLInputElement)) return;
         const reveal = input.type === 'password';
         input.type = reveal ? 'text' : 'password';
         btn.classList.toggle('revealed', reveal);
@@ -916,7 +1398,7 @@
     $('#btn-back-select').addEventListener('click', () => setPage('select'));
   }
 
-  const ERR_EL = {
+  const ERR_EL: Record<string, [string | null, string]> = {
     projectname: ['#wrap-name', '#err-projectname'],
     version: ['#wrap-version', '#err-version'],
     versioncode: ['#wrap-versioncode', '#err-versioncode'],
@@ -927,33 +1409,33 @@
     archs: [null, '#err-archs'],
   };
 
-  function setError(field, msg) {
+  function setError(field: string, msg: string): void {
     const [wrap, err] = ERR_EL[field];
     if (wrap) $(wrap).classList.add('invalid');
     $(err).textContent = msg;
   }
 
-  function clearError(field) {
+  function clearError(field: string): void {
     const [wrap, err] = ERR_EL[field];
     if (wrap) $(wrap).classList.remove('invalid');
     $(err).textContent = '';
   }
 
-  function clearAllErrors() {
+  function clearAllErrors(): void {
     Object.keys(ERR_EL).forEach(clearError);
   }
 
-  function focusFirstInvalid(fields) {
+  function focusFirstInvalid(fields: string[]): void {
     if (!fields.length) return;
     const [wrap] = ERR_EL[fields[0]];
     const input = wrap && $(wrap).querySelector('input, button');
-    if (input) input.focus({ preventScroll: false });
+    if (input) (input as HTMLElement).focus({ preventScroll: false });
   }
 
-  function validateForm() {
-    const bad = [];
-    const version = $('#field-version').value.trim();
-    const versionCode = $('#field-versioncode').value.trim();
+  function validateForm(): { ok: boolean; fields: string[] } {
+    const bad: string[] = [];
+    const version = $<HTMLInputElement>('#field-version').value.trim();
+    const versionCode = $<HTMLInputElement>('#field-versioncode').value.trim();
 
     if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(version)) {
       setError('version', 'Enter a semantic version like 1.37.18.');
@@ -965,9 +1447,9 @@
     }
 
     if (state.signed) {
-      if (!$('#field-alias').value.trim()) { setError('alias', 'Key alias is required for signed builds.'); bad.push('alias'); }
-      if ($('#field-keypass').value.length < 6) { setError('keypass', 'At least 6 characters (keytool requirement).'); bad.push('keypass'); }
-      if ($('#field-storepass').value.length < 6) { setError('storepass', 'At least 6 characters (keytool requirement).'); bad.push('storepass'); }
+      if (!$<HTMLInputElement>('#field-alias').value.trim()) { setError('alias', 'Key alias is required for signed builds.'); bad.push('alias'); }
+      if ($<HTMLInputElement>('#field-keypass').value.length < 6) { setError('keypass', 'At least 6 characters (keytool requirement).'); bad.push('keypass'); }
+      if ($<HTMLInputElement>('#field-storepass').value.length < 6) { setError('storepass', 'At least 6 characters (keytool requirement).'); bad.push('storepass'); }
       if (!state.country) { setError('country', 'Pick the country for the signing certificate.'); bad.push('country'); }
     }
 
@@ -983,18 +1465,18 @@
   // Building a version that was already built replaces that build's output
   // files (the build script writes the same Name.vX.Y.Z[.abi] filenames into
   // the project root) — ask first, and offer to remove the old files.
-  let rebuildResolve = null;
+  let rebuildResolve: ((proceed: boolean) => void) | null = null;
 
-  async function maybeConfirmRebuild() {
+  async function maybeConfirmRebuild(): Promise<boolean> {
     if (!$('#dlg-rebuild').classList.contains('hidden')) return false;
-    const version = $('#field-version').value.trim();
-    const prev = findSuccessByVersion(state.project.dir, version);
+    const version = $<HTMLInputElement>('#field-version').value.trim();
+    const prev = state.project ? findSuccessByVersion(state.project.dir, version) : null;
     if (!prev) return true;
 
     const files = [...(prev.artifacts || [])];
-    const states = prev.demo
-      ? files.map(() => ({ exists: true }))
-      : await Promise.all(files.map(async (f) => {
+    const states: StatResult[] = prev.demo
+      ? files.map(() => ({ exists: true, size: 0, mtime: 0 }))
+      : await Promise.all(files.map(async (f): Promise<StatResult> => {
           try {
             return await window.builder.statPath(f.path);
           } catch {
@@ -1009,7 +1491,7 @@
       `A new build of the same version replaces the previous build's output files:`;
 
     const lower = $('#dlg-rebuild-lower');
-    const last = lastSuccessBuild(state.project.dir);
+    const last = state.project ? lastSuccessBuild(state.project.dir) : null;
     if (last && compareVersions(version, last.version) < 0) {
       lower.textContent = `Heads up: v${version} is also lower than the last built version v${last.version}.`;
       lower.classList.remove('hidden');
@@ -1047,7 +1529,7 @@
     });
   }
 
-  function closeRebuildDialog(proceed) {
+  function closeRebuildDialog(proceed: boolean): void {
     $('#scrim').classList.add('hidden');
     $('#dlg-rebuild').classList.add('hidden');
     if (rebuildResolve) {
@@ -1056,9 +1538,9 @@
     }
   }
 
-  async function deleteRebuildFiles() {
-    const version = $('#field-version').value.trim();
-    const prev = findSuccessByVersion(state.project.dir, version);
+  async function deleteRebuildFiles(): Promise<void> {
+    const version = $<HTMLInputElement>('#field-version').value.trim();
+    const prev = state.project ? findSuccessByVersion(state.project.dir, version) : null;
     if (!prev) return;
     for (const f of prev.artifacts || []) {
       try {
@@ -1070,43 +1552,45 @@
     snack('Previous build files moved to the Recycle Bin.');
   }
 
-  function updateSummary() {
+  function updateSummary(): void {
     if (state.page !== 'config' && !window.__demo) return;
     const name = state.appName || (state.project ? state.project.name : 'App');
-    const version = $('#field-version').value.trim() || '…';
+    const version = $<HTMLInputElement>('#field-version').value.trim() || '…';
     const fmt = state.format === 'aab' ? 'AAB bundle' : `APK · ${state.archs.size || 0} architecture${state.archs.size === 1 ? '' : 's'}`;
+    const sdkTxt = state.targetSdk ? ` · API ${state.targetSdk}` : '';
     $('#summary-info').innerHTML = '';
     const b = document.createElement('b');
     b.textContent = `${name} v${version}`;
-    $('#summary-info').append(b, ` — ${state.signed ? 'signed release' : 'unsigned release'} · ${fmt}`);
+    $('#summary-info').append(b, ` — ${state.signed ? 'signed release' : 'unsigned release'} · ${fmt}${sdkTxt}`);
   }
 
-  function collectConfig(debug) {
+  function collectConfig(debug?: boolean): BuildConfig {
     return {
-      projectDir: state.project.dir,
+      projectDir: state.project!.dir,
       appName: state.appName || (state.project && state.project.name) || 'App',
-      version: $('#field-version').value.trim(),
-      versionCode: Number($('#field-versioncode').value.trim()),
+      version: $<HTMLInputElement>('#field-version').value.trim(),
+      versionCode: Number($<HTMLInputElement>('#field-versioncode').value.trim()),
       signed: state.signed,
-      keyAlias: $('#field-alias').value.trim(),
-      keyPassword: $('#field-keypass').value,
-      keystorePassword: $('#field-storepass').value,
+      keyAlias: $<HTMLInputElement>('#field-alias').value.trim(),
+      keyPassword: $<HTMLInputElement>('#field-keypass').value,
+      keystorePassword: $<HTMLInputElement>('#field-storepass').value,
       countryCode: state.country,
       format: state.format,
       archs: [...state.archs],
       relocate: state.relocate,
       debug: !!debug,
+      targetSdk: state.targetSdk ? Number(state.targetSdk) : undefined,
     };
   }
 
   // ─────────────────────────────── page 3 ──────────────────────────────────
-  function clearConsole() {
+  function clearConsole(): void {
     $('#console-body').innerHTML = '';
     state.logLines = [];
     state.stick = true;
   }
 
-  function appendLog(text, cls) {
+  function appendLog(text: string, cls?: string): void {
     const body = $('#console-body');
     const div = document.createElement('div');
     div.className = `log-line${cls ? ` ${cls}` : ''}`;
@@ -1115,12 +1599,12 @@
     state.logLines.push(text);
     if (state.logLines.length > 4000) {
       state.logLines.splice(0, 500);
-      while (body.children.length > 3500) body.firstChild.remove();
+      while (body.children.length > 3500) body.firstElementChild!.remove();
     }
     if (state.stick) body.scrollTop = body.scrollHeight;
   }
 
-  function classifyLine(text, stream) {
+  function classifyLine(text: string, stream: string): string {
     if (stream === 'err') return 'err';
     if (/^Running:|^\$ |command line/i.test(text)) return 'cmd';
     if (/BUILD SUCCESSFUL|Built:|VALID|Keystore is VALID/i.test(text)) return 'ok';
@@ -1128,7 +1612,7 @@
     return '';
   }
 
-  function setPhase(id, pillClass) {
+  function setPhase(id: string, pillClass?: 'ok' | 'fail'): void {
     state.phase = id;
     if (id !== 'done') state.lastPhase = id;
     const label = PHASES[id] || id;
@@ -1151,7 +1635,7 @@
     if (PHASES[id]) appendLog(PHASES[id], 'phase');
   }
 
-  function startTimer() {
+  function startTimer(): void {
     state.buildStart = Date.now();
     $('#elapsed').textContent = '00:00';
     clearInterval(state.elapsedTimer);
@@ -1160,15 +1644,16 @@
     }, 1000);
   }
 
-  function stopTimer() {
+  function stopTimer(): void {
     clearInterval(state.elapsedTimer);
   }
 
-  function renderBuildChips(cfg) {
-    const chips = [];
+  function renderBuildChips(cfg: BuildMetaCfg): void {
+    const chips: string[] = [];
     chips.push(cfg.format === 'aab' ? 'AAB' : 'APK');
     if (cfg.format === 'apk') chips.push(cfg.archs.join(', '));
     chips.push(cfg.signed ? 'Signed' : 'Unsigned');
+    if (cfg.targetSdk) chips.push(`API ${cfg.targetSdk}`);
     if (cfg.debug) chips.push('DEBUG');
     const box = $('#build-chips');
     box.innerHTML = '';
@@ -1180,13 +1665,14 @@
     }
   }
 
-  async function startBuild(debug) {
+  async function startBuild(debug: boolean): Promise<void> {
     if (state.buildRunning) return;
     const cfg = collectConfig(debug);
     state.buildCfg = cfg;
     state.lastDebug = !!debug;
     state.artifacts = [];
     state.keystore = null;
+    state.keyFailPath = null;
     state.phase = null;
     state.lastPhase = null;
     state.buildRunning = true;
@@ -1197,10 +1683,17 @@
     $('#console-title').textContent = debug ? 'build log — debug mode' : 'build log';
     $('#console-live').classList.remove('hidden');
     $('#btn-cancel').classList.remove('hidden');
-    $('#btn-cancel').disabled = false;
+    $<HTMLButtonElement>('#btn-cancel').disabled = false;
+    $('#btn-back-projects').classList.add('hidden');
     setPhase('init');
     startTimer();
     setPage('build');
+
+    // Remember the signing passwords (encrypted, per project) so the next
+    // build of this project can autofill them after a Windows Hello check.
+    if (cfg.signed) {
+      await saveSecrets(['keypass', 'storepass']);
+    }
 
     const res = await window.builder.startBuild(cfg);
     if (!res.ok) {
@@ -1210,11 +1703,12 @@
       $('#phase-label').textContent = 'Could not start';
       appendLog(`Failed to start the build: ${res.error}`, 'err');
       $('#console-live').classList.add('hidden');
+      $('#btn-back-projects').classList.remove('hidden');
       showFailDialog();
     }
   }
 
-  function onBuildEvent(evt) {
+  function onBuildEvent(evt: BuildEvent): void {
     switch (evt.type) {
       case 'meta': {
         for (const note of evt.notes || []) appendLog(note, 'warn');
@@ -1239,6 +1733,10 @@
         state.keystore = { path: evt.path, size: evt.size };
         appendLog(`✓ Keystore: ${basename(evt.path)}`, 'ok');
         break;
+      case 'keyfail':
+        state.keyFailPath = evt.path;
+        appendLog(`✗ Keystore rejected the configured passwords: ${evt.path}`, 'err');
+        break;
       case 'exit':
         state.buildRunning = false;
         stopTimer();
@@ -1250,6 +1748,7 @@
           $('#phase-label').textContent = 'Canceled';
           appendLog('Build canceled by user.', 'warn');
           snack('Build canceled.');
+          $('#btn-back-projects').classList.remove('hidden');
         } else if (evt.code === 0) {
           setPhase('done', 'ok');
           appendLog('BUILD SUCCESSFUL', 'ok');
@@ -1259,7 +1758,11 @@
           const where = state.lastPhase && PHASES[state.lastPhase] ? `during ${PHASES[state.lastPhase].toLowerCase()}` : `exit code ${evt.code}`;
           $('#phase-label').textContent = `Failed (${where})`;
           appendLog(`Process exited with code ${evt.code}.`, 'err');
-          showFailDialog();
+          $('#btn-back-projects').classList.remove('hidden');
+          // A keystore mismatch gets its own asking-mode dialog: archive the
+          // old key and build with a fresh one, or keep everything as-is.
+          if (state.keyFailPath) showKeyResetDialog();
+          else showFailDialog();
         }
         break;
       case 'error':
@@ -1269,7 +1772,7 @@
   }
 
   /** Persist the finished build (success / failure / cancel) in the project's history. */
-  function recordBuildFromExit(evt) {
+  function recordBuildFromExit(evt: Extract<BuildEvent, { type: 'exit' }>): void {
     const cfg = state.buildCfg;
     if (!cfg || !cfg.projectDir) return;
     recordBuild({
@@ -1284,33 +1787,76 @@
       archs: [...(cfg.archs || [])],
       signed: !!cfg.signed,
       debug: !!cfg.debug,
+      targetSdk: cfg.targetSdk || undefined,
       artifacts: state.artifacts.map((a) => ({ path: a.path, size: a.size })),
       keystore: state.keystore ? { path: state.keystore.path, size: state.keystore.size } : null,
     });
   }
 
-  function showFailDialog() {
+  function showFailDialog(): void {
     const wasDebug = state.lastDebug;
     $('#dlg-debug-text').textContent = wasDebug
       ? 'The debug run failed too. Run it one more time in debug mode, or inspect the log above.'
       : 'Do you want to run it again in debug mode with stack-trace and more details?';
-    $('#btn-fail-debug').lastChild.textContent = wasDebug ? ' Run again' : ' Run in debug mode';
+    ($('#btn-fail-debug').lastChild as Text).textContent = wasDebug ? ' Run again' : ' Run in debug mode';
     $('#scrim').classList.remove('hidden');
     $('#dlg-debug').classList.remove('hidden');
   }
 
-  function closeFailDialog() {
+  function closeFailDialog(): void {
     $('#scrim').classList.add('hidden');
     $('#dlg-debug').classList.add('hidden');
   }
 
-  function finishBuild() {
+  // ── keystore reset (asking mode) ─────────────────────────────────────────
+  // Shown when a build aborted because the saved passwords don't unlock the
+  // project's keystore. Confirming archives android-key/ as
+  // android-key-old[-N] (nothing deleted) and rebuilds with a fresh key.
+  function showKeyResetDialog(): void {
+    const dir = state.buildCfg?.projectDir || '';
+    const sep = dir.includes('\\') ? '\\' : '/';
+    const oldPath = state.keyFailPath || `${dir}${sep}android-key`;
+    $('#keyreset-old-path').textContent = oldPath;
+    $('#keyreset-new-path').textContent = `${dir}${sep}android-key-old`;
+    $('#scrim').classList.remove('hidden');
+    $('#dlg-keyreset').classList.remove('hidden');
+  }
+
+  function closeKeyResetDialog(): void {
+    $('#scrim').classList.add('hidden');
+    $('#dlg-keyreset').classList.add('hidden');
+    state.keyFailPath = null;
+  }
+
+  async function confirmKeyReset(): Promise<void> {
+    const dir = state.buildCfg?.projectDir;
+    if (!dir) return;
+    const btn = $<HTMLButtonElement>('#btn-keyreset-confirm');
+    btn.disabled = true;
+    let res: KeyResetResult;
+    try {
+      res = await window.builder.renameKeystore(dir);
+    } catch (err) {
+      res = { ok: false, error: String(err) };
+    }
+    btn.disabled = false;
+    closeKeyResetDialog();
+    if (!res.ok) {
+      snack(`Could not archive the old key: ${res.error}`);
+      return;
+    }
+    snack(`Old key archived as ${basename(res.to)} — building with a fresh key.`);
+    // The user just confirmed this rebuild: skip the version-warning dialog.
+    void startBuild(false);
+  }
+
+  function finishBuild(): void {
     renderResult();
     setPage('result');
   }
 
   // ─────────────────────────────── page 4 ──────────────────────────────────
-  function artifactRow({ name, size, kind, path, note }) {
+  function artifactRow({ name, size, kind, path, note }: { name: string; size: number | null; kind: string; path: string; note: string }): HTMLElement {
     const row = document.createElement('div');
     row.className = 'artifact';
 
@@ -1358,8 +1904,8 @@
     return row;
   }
 
-  function renderResult() {
-    const cfg = state.buildCfg || {};
+  function renderResult(): void {
+    const cfg = state.buildCfg;
     const list = $('#artifact-list');
     list.innerHTML = '';
 
@@ -1387,20 +1933,20 @@
     $('#zip-key-note').textContent = state.keystore ? 'plus the keystore ' : '';
     $('#result-title').textContent = state.artifacts.length > 1 ? 'Build complete — all architectures' : 'Build complete';
     $('#result-sub').textContent =
-      `${cfg.appName || 'App'} v${cfg.version || ''} · ${cfg.format === 'aab' ? 'AAB' : 'APK'} · ` +
-      `${cfg.signed ? 'signed' : 'unsigned'} · finished in ${fmtElapsed(Date.now() - state.buildStart)}`;
+      `${cfg?.appName || 'App'} v${cfg?.version || ''} · ${cfg?.format === 'aab' ? 'AAB' : 'APK'} · ` +
+      `${cfg?.signed ? 'signed' : 'unsigned'} · finished in ${fmtElapsed(Date.now() - state.buildStart)}`;
   }
 
-  async function downloadZip() {
+  async function downloadZip(): Promise<void> {
     if (!state.artifacts.length) return;
-    const cfg = state.buildCfg || {};
-    const entries = state.artifacts.map((a) => ({ path: a.path, name: basename(a.path) }));
+    const cfg = state.buildCfg;
+    const entries: ZipEntry[] = state.artifacts.map((a) => ({ path: a.path, name: basename(a.path) }));
     if (state.keystore) entries.push({ path: state.keystore.path, name: 'android-key.jks' });
 
-    const safeName = (cfg.appName || 'app').replace(/[\\/:*?"<>|]/g, '_').replace(/ /g, '_');
-    const zipName = `${safeName}-v${cfg.version || '0.0.0'}-${cfg.format || 'apk'}.zip`;
+    const safeName = (cfg?.appName || 'app').replace(/[\\/:*?"<>|]/g, '_').replace(/ /g, '_');
+    const zipName = `${safeName}-v${cfg?.version || '0.0.0'}-${cfg?.format || 'apk'}.zip`;
 
-    const btn = $('#btn-download-zip');
+    const btn = $<HTMLButtonElement>('#btn-download-zip');
     btn.disabled = true;
     try {
       const made = await window.builder.makeZip(entries);
@@ -1415,9 +1961,9 @@
     }
   }
 
-  function startOver() {
-    $('#field-keypass').value = '';
-    $('#field-storepass').value = '';
+  function startOver(): void {
+    $<HTMLInputElement>('#field-keypass').value = '';
+    $<HTMLInputElement>('#field-storepass').value = '';
     state.artifacts = [];
     state.keystore = null;
     state.buildCfg = null;
@@ -1426,13 +1972,13 @@
   }
 
   // ───────────────────────── country combobox ──────────────────────────────
-  function initCountryCombo() {
+  function initCountryCombo(): void {
     const wrap = $('#wrap-country');
     const menu = $('#country-menu');
-    const search = $('#country-search');
+    const search = $<HTMLInputElement>('#country-search');
     const listEl = $('#country-list');
     let hlIndex = -1;
-    let filtered = [...window.COUNTRIES];
+    let filtered: Array<[string, string]> = [...window.COUNTRIES];
 
     const renderList = () => {
       listEl.innerHTML = '';
@@ -1491,7 +2037,7 @@
       }
     };
 
-    const select = (cc) => {
+    const select = (cc: string) => {
       state.country = cc;
       localStorage.setItem('ab.country', cc);
       syncButton();
@@ -1537,7 +2083,7 @@
     });
 
     document.addEventListener('click', (e) => {
-      if (!wrap.contains(e.target)) close();
+      if (!wrap.contains(e.target as Node)) close();
     });
 
     syncButton();
@@ -1545,7 +2091,7 @@
 
   // ───────────────────────── password generator ────────────────────────────
   const gen = {
-    target: null,
+    target: null as string | null,
     len: 16,
     upper: true,
     lower: true,
@@ -1554,8 +2100,9 @@
     ambiguous: false,
     value: '',
   };
+  type GenToggleKey = 'upper' | 'lower' | 'digit' | 'symbol';
 
-  const SETS = {
+  const SETS: Record<GenToggleKey, string> = {
     upper: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
     lower: 'abcdefghijklmnopqrstuvwxyz',
     digit: '0123456789',
@@ -1563,15 +2110,15 @@
   };
   const AMBIGUOUS = 'O0oIl1|`\'"~,;:.';
 
-  function generatePassword() {
-    const classes = ['upper', 'lower', 'digit', 'symbol'].filter((k) => gen[k]);
+  function generatePassword(): string {
+    const classes = (['upper', 'lower', 'digit', 'symbol'] as GenToggleKey[]).filter((k) => gen[k]);
     if (!classes.length) return '';
     let pool = classes.map((k) => SETS[k]).join('');
     if (!gen.ambiguous) pool = [...pool].filter((c) => !AMBIGUOUS.includes(c)).join('');
 
     const rand = new Uint32Array(gen.len);
     crypto.getRandomValues(rand);
-    let chars = classes.map((k) => {
+    const chars = classes.map((k) => {
       const set = [...SETS[k]].filter((c) => gen.ambiguous || !AMBIGUOUS.includes(c));
       return set[rand[classes.indexOf(k)] % set.length];
     });
@@ -1588,7 +2135,7 @@
     return gen.value;
   }
 
-  function strengthOf(pw) {
+  function strengthOf(pw: string): { bits: number; label: string; pct: number } {
     if (!pw) return { bits: 0, label: '—', pct: 0 };
     let pool = 0;
     if (/[A-Z]/.test(pw)) pool += 26;
@@ -1600,7 +2147,7 @@
     return { bits, label, pct: Math.min(100, Math.round((bits / 128) * 100)) };
   }
 
-  function refreshGenerator() {
+  function refreshGenerator(): void {
     const pw = generatePassword();
     $('#gen-output').textContent = pw || 'Enable at least one character set';
     const st = strengthOf(pw);
@@ -1608,35 +2155,40 @@
     $('#gen-strength-label').textContent = pw ? `${st.label} · ${st.bits} bits` : '—';
   }
 
-  function openGenerator(targetField) {
+  function openGenerator(targetField: string): void {
     gen.target = targetField;
     refreshGenerator();
     $('#scrim').classList.remove('hidden');
     $('#dlg-generator').classList.remove('hidden');
   }
 
-  function closeGenerator() {
+  function closeGenerator(): void {
     $('#scrim').classList.add('hidden');
     $('#dlg-generator').classList.add('hidden');
   }
 
-  function initGenerator() {
+  function initGenerator(): void {
     const syncToggles = () => {
-      $$('.gen-toggles .checkbox').forEach((box) => box.classList.toggle('on', gen[box.dataset.gt]));
+      $$('.gen-toggles .checkbox').forEach((box) => {
+        const k = box.dataset.gt as GenToggleKey | undefined;
+        box.classList.toggle('on', !!k && gen[k]);
+      });
     };
     $$('.gen-toggles .checkbox').forEach((box) =>
       box.addEventListener('click', () => {
-        gen[box.dataset.gt] = !gen[box.dataset.gt];
+        const k = box.dataset.gt as GenToggleKey | undefined;
+        if (!k) return;
+        gen[k] = !gen[k];
         syncToggles();
         refreshGenerator();
       })
     );
     syncToggles();
 
-    const slider = $('#gen-len');
+    const slider = $<HTMLInputElement>('#gen-len');
     const syncSlider = () => {
       $('#gen-len-out').textContent = slider.value;
-      slider.style.setProperty('--fill', `${((slider.value - 8) / 24) * 100}%`);
+      slider.style.setProperty('--fill', `${((Number(slider.value) - 8) / 24) * 100}%`);
     };
     slider.addEventListener('input', () => {
       gen.len = Number(slider.value);
@@ -1648,18 +2200,28 @@
     $('#btn-gen-refresh').addEventListener('click', refreshGenerator);
     $('#btn-gen-cancel').addEventListener('click', closeGenerator);
     $('#btn-gen-use').addEventListener('click', () => {
-      if (gen.target && gen.value) {
-        const input = document.getElementById(gen.target);
-        input.value = gen.value;
-        input.dispatchEvent(new Event('input'));
+      const target = gen.target;
+      const value = gen.value;
+      if (target && value) {
+        const input = document.getElementById(target);
+        if (input instanceof HTMLInputElement) {
+          input.value = value;
+          input.dispatchEvent(new Event('input'));
+        }
       }
       closeGenerator();
-      snack('Password applied.');
+      if (!(target && value)) {
+        snack('Password applied.');
+        return;
+      }
+      // The generated password goes straight into the encrypted vault.
+      const field: VaultField = target === 'field-storepass' ? 'storepass' : 'keypass';
+      saveSecrets([field]).then(() => snack('Password applied and saved encrypted.'));
     });
   }
 
   // ─────────────────────────────── wiring ──────────────────────────────────
-  function init() {
+  function init(): void {
     if (!window.builder) {
       document.body.innerHTML = '<p style="padding:40px">This page must run inside the Expo Builder app.</p>';
       return;
@@ -1673,6 +2235,36 @@
     $('#btn-env-continue').addEventListener('click', () => setPage('select'));
     $('#btn-env-recheck').addEventListener('click', runEnvCheck);
     $('#btn-env-recheck2').addEventListener('click', runEnvCheck);
+    $('#btn-version-close').addEventListener('click', closeVersionDialog);
+    $('#btn-install-update').addEventListener('click', () => void startInstall());
+    $('#btn-install-cancel').addEventListener('click', async () => {
+      $<HTMLButtonElement>('#btn-install-cancel').disabled = true;
+      $('#dlg-version-phase').textContent = 'Canceling…';
+      await window.builder.cancelInstall();
+      $<HTMLButtonElement>('#btn-install-cancel').disabled = false;
+    });
+
+    // signing-password vault (page 2): fingerprint = unlock & autofill
+    $('#btn-vault-fill').addEventListener('click', () => unlockVault({ manual: true }));
+    $('#btn-vault-forget').addEventListener('click', async () => {
+      if (!state.project) return;
+      try {
+        await window.builder.forgetSecrets(state.project.dir);
+      } catch { /* ignore */ }
+      $('#btn-vault-forget').classList.add('hidden');
+      snack('Saved passwords forgotten for this project.');
+    });
+    // The OS consent prompt appearing freezes the app behind the unlock
+    // overlay; Cancel dismisses the prompt itself (main kills the probe).
+    window.builder.onVaultAuthEvent(() => {
+      clearTimeout(vaultAuthShowTimer);
+      vaultAuthShowTimer = setTimeout(showVaultAuth, 250);
+    });
+    $('#btn-vault-cancel').addEventListener('click', () => {
+      vaultAuthCanceled = true;
+      void window.builder.cancelVaultAuth();
+      hideVaultAuth();
+    });
 
     // custom frameless-window controls
     $('#win-minimize').addEventListener('click', () => window.builder.minimizeWindow());
@@ -1681,8 +2273,8 @@
     // name-the-project dialog (page 1)
     $('#btn-name-ok').addEventListener('click', confirmProjectName);
     $('#btn-name-cancel').addEventListener('click', cancelProjectName);
-    $('#field-projectname').addEventListener('input', () => clearError('projectname'));
-    $('#field-projectname').addEventListener('keydown', (e) => {
+    $<HTMLInputElement>('#field-projectname').addEventListener('input', () => clearError('projectname'));
+    $<HTMLInputElement>('#field-projectname').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
         confirmProjectName();
@@ -1695,10 +2287,11 @@
 
     // build page
     $('#btn-cancel').addEventListener('click', async () => {
-      $('#btn-cancel').disabled = true;
+      $<HTMLButtonElement>('#btn-cancel').disabled = true;
       appendLog('Canceling build…', 'warn');
       await window.builder.cancelBuild();
     });
+    $('#btn-back-projects').addEventListener('click', () => setPage('select'));
     $('#btn-copy-log').addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(state.logLines.join('\n'));
@@ -1737,6 +2330,14 @@
       startBuild(true);
     });
 
+    // keystore-reset dialog (asking mode)
+    $('#btn-keyreset-cancel').addEventListener('click', closeKeyResetDialog);
+    $('#btn-keyreset-debug').addEventListener('click', () => {
+      closeKeyResetDialog();
+      startBuild(true);
+    });
+    $('#btn-keyreset-confirm').addEventListener('click', () => void confirmKeyReset());
+
     // console stick-to-bottom detection
     const body = $('#console-body');
     body.addEventListener('scroll', () => {
@@ -1745,15 +2346,21 @@
 
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        // While the Windows Hello unlock overlay is up the app is frozen;
+        // the OS prompt (or its Cancel button) is the only way out.
+        if (!$('#vault-auth').classList.contains('hidden')) return;
         if (!$('#dlg-name').classList.contains('hidden')) cancelProjectName();
         if (!$('#dlg-rebuild').classList.contains('hidden')) closeRebuildDialog(false);
         else if (!$('#dlg-history').classList.contains('hidden')) closeHistoryDialog();
+        if (!$('#dlg-keyreset').classList.contains('hidden')) closeKeyResetDialog();
+        if (!$('#dlg-version').classList.contains('hidden')) closeVersionDialog();
         closeFailDialog();
         closeGenerator();
       }
     });
 
     window.builder.onBuildEvent(onBuildEvent);
+    window.builder.onUpdateEvent(onUpdateEvent);
     loadProjects();
     setPage('deps');
     runEnvCheck();
@@ -1762,7 +2369,7 @@
   }
 
   // ───────────────────── demo hooks (smoke test only) ──────────────────────
-  function initDemo() {
+  function initDemo(): void {
     if (!new URLSearchParams(location.search).has('demo')) return;
 
     window.__demo = {
@@ -1796,6 +2403,7 @@
           hasAndroidDir: true,
           hasPersistentKey: true,
           appConfigName: null,
+          appJsonWritable: true,
         };
         renderProjectCard(state.project);
         $('#project-card').classList.remove('hidden');
@@ -1804,12 +2412,12 @@
         prefillForm(state.project);
         $('#config-project-label').textContent = 'Mahameh — F:\\Mahameh (App)';
         $('#identity-note').textContent = 'App name: Mahameh — set when the project was defined.';
-        $('#field-version').value = '1.37.19';
-        $('#field-versioncode').value = computeVersionCode('1.37.19');
+        $<HTMLInputElement>('#field-version').value = '1.37.19';
+        $<HTMLInputElement>('#field-versioncode').value = computeVersionCode('1.37.19');
         $('#field-version').dispatchEvent(new Event('input'));
-        $('#field-alias').value = 'mahameh.faslevasl';
-        $('#field-keypass').value = 'nL54qLNBP2o8';
-        $('#field-storepass').value = 'k8hi0d9x4E6O';
+        $<HTMLInputElement>('#field-alias').value = 'mahameh.faslevasl';
+        $<HTMLInputElement>('#field-keypass').value = 'nL54qLNBP2o8';
+        $<HTMLInputElement>('#field-storepass').value = 'k8hi0d9x4E6O';
         setPage('config');
         updateSummary();
       },
@@ -1821,7 +2429,7 @@
         setPhase('init');
         startTimer();
         setPage('build');
-        const script = [
+        const script: Array<['meta' | 'line' | 'phase' | 'artifact' | 'keystore', string | null]> = [
           ['meta', null],
           ['line', 'Detected package manager: yarn'],
           ['line', "yarn install v1.22.22"],
@@ -1848,8 +2456,8 @@
         ];
         script.forEach(([type, val], i) => {
           setTimeout(() => {
-            if (type === 'line') appendLog(val, classifyLine(val, 'out'));
-            else if (type === 'phase') setPhase(val);
+            if (type === 'line') appendLog(val as string, classifyLine(val as string, 'out'));
+            else if (type === 'phase') setPhase(val as string);
             else if (type === 'artifact') {
               state.artifacts.push({ path: `F:\\Mahameh (App)\\${val}`, size: 52428800 + i * 1024 * 1024 });
               appendLog(`✓ Output ready: ${val}`, 'ok');
@@ -1859,6 +2467,37 @@
             }
           }, 220 * i);
         });
+      },
+      // Build page after the process stopped (failed/canceled) — the state
+      // where the Back-to-projects button matters. No history write: the
+      // demo project dir is fake.
+      buildStopped() {
+        state.buildCfg = collectConfig(false);
+        state.buildRunning = false;
+        state.buildStart = Date.now() - 95000;
+        clearConsole();
+        renderBuildChips(state.buildCfg);
+        setPhase('gradle');
+        appendLog('Running: ./gradlew assembleRelease --no-daemon --console=plain', 'cmd');
+        appendLog('> Task :app:bundleReleaseJsAndAssets');
+        appendLog('> Task :app:packageRelease', '');
+        appendLog('FAILURE: Build failed with an exception.', 'err');
+        appendLog('Process exited with code 1.', 'err');
+        stopTimer();
+        $('#elapsed').textContent = fmtElapsed(Date.now() - state.buildStart);
+        setPhase('done', 'fail');
+        $('#phase-label').textContent = 'Failed (during gradle build)';
+        $('#console-live').classList.add('hidden');
+        $('#btn-cancel').classList.add('hidden');
+        $('#btn-back-projects').classList.remove('hidden');
+        setPage('build');
+      },
+      // Keystore-reset dialog (screenshots only): failed build + the
+      // asking-mode archive-and-rebuild dialog on top.
+      keyResetDialog() {
+        window.__demo?.buildStopped();
+        state.keyFailPath = 'F:\\Mahameh (App)\\android-key\\android-key.jks';
+        showKeyResetDialog();
       },
       result() {
         state.buildCfg = state.buildCfg || collectConfig(false);
@@ -1877,6 +2516,24 @@
       generator() {
         openGenerator('field-keypass');
       },
+      // Version dialog in install-progress mode (screenshots only).
+      updateDialog(id?: string) {
+        const upd = demoUpdates().deps.find((d) => d.id === (id || 'cmake')) || demoUpdates().deps.find((d) => d.id === 'cmake')!;
+        const installer = upd.id === 'node' || upd.id === 'jdk';
+        openVersionDialog(upd);
+        enterInstallMode(installer ? 'installer' : 'sdk');
+        setInstallProgress(null, installer ? 'Downloading…' : 'Downloading & installing…');
+        setInstallProgress(installer ? 14 : 62, installer ? '1.2 MB of 8.9 MB' : 'Unzipping cmake;4.1.2');
+        (installer
+          ? ['Resolving https://api.adoptium.net/v3/installer/latest/21/windows/x64/jdk/hotspot/normal/eclipse',
+             'Downloading temurin-jdk-21-latest-x64.msi']
+          : ['[============================================ ]  62% Unzipping… cmake;4.1.2',
+             'Installing SDK package cmake;4.1.2']
+        ).forEach(appendInstallLog);
+      },
+      updateDialogDone() {
+        finishInstall(true, 'Installed. Re-checking your tools…');
+      },
       history() {
         state.project = {
           dir: 'F:\\Mahameh (App)',
@@ -1891,6 +2548,7 @@
           hasAndroidDir: true,
           hasPersistentKey: true,
           appConfigName: null,
+          appJsonWritable: true,
         };
         state.appName = 'Mahameh';
         const D = 86400000;
@@ -1920,28 +2578,51 @@
         if (builds.length) openHistoryDialog(builds[1] || builds[0]);
       },
       versionWarning() {
-        $('#field-version').value = '1.37.18';
-        $('#field-versioncode').value = computeVersionCode('1.37.18');
+        $<HTMLInputElement>('#field-version').value = '1.37.18';
+        $<HTMLInputElement>('#field-versioncode').value = computeVersionCode('1.37.18');
         $('#field-version').dispatchEvent(new Event('input'));
       },
       rebuildDialog() {
-        $('#field-version').value = '1.37.18';
-        $('#field-versioncode').value = computeVersionCode('1.37.18');
+        $<HTMLInputElement>('#field-version').value = '1.37.18';
+        $<HTMLInputElement>('#field-versioncode').value = computeVersionCode('1.37.18');
         $('#field-version').dispatchEvent(new Event('input'));
         maybeConfirmRebuild();
       },
       resetVersion() {
-        $('#field-version').value = '1.37.19';
-        $('#field-versioncode').value = computeVersionCode('1.37.19');
+        $<HTMLInputElement>('#field-version').value = '1.37.19';
+        $<HTMLInputElement>('#field-versioncode').value = computeVersionCode('1.37.19');
         $('#field-version').dispatchEvent(new Event('input'));
       },
       failDialog() {
         showFailDialog();
       },
-      countryOpen(query) {
+      // Windows Hello unlock overlay (screenshots only): the frozen blurred
+      // state, then the success path fading away + autofilling the fields.
+      vaultAuth() {
+        $<HTMLInputElement>('#field-keypass').value = '';
+        $<HTMLInputElement>('#field-storepass').value = '';
+        showVaultAuth();
+      },
+      vaultAuthDone(fill = true) {
+        hideVaultAuth();
+        if (!fill) {
+          snack('Locked — Windows Hello did not verify.');
+          return;
+        }
+        $<HTMLInputElement>('#field-keypass').value = 'nL54qLNBP2o8';
+        $<HTMLInputElement>('#field-storepass').value = 'k8hi0d9x4E6O';
+        for (const id of ['#wrap-keypass', '#wrap-storepass']) {
+          const wrap = $(id);
+          wrap.classList.remove('vault-filled');
+          void wrap.offsetWidth;
+          wrap.classList.add('vault-filled');
+        }
+        snack('Saved passwords unlocked with Windows Hello.');
+      },
+      countryOpen(query?: string) {
         $('#country-btn').click();
         if (query) {
-          $('#country-search').value = query;
+          $<HTMLInputElement>('#country-search').value = query;
           $('#country-search').dispatchEvent(new Event('input'));
         }
       },

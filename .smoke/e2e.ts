@@ -1,17 +1,18 @@
-const {app, BrowserWindow} = require('electron');
-const path = require('path');
-const fs = require('fs');
+import { app, BrowserWindow } from 'electron';
+import * as path from 'path';
+import * as fs from 'fs';
+
 const PROJ = 'F:/Android Builder/.smoke/fake-project';
 const LOG = path.join(process.cwd(), '.smoke', 'e2e.log');
-const say = (m) => { fs.appendFileSync(LOG, m + '\n'); console.log(m); };
+const say = (m: string) => { fs.appendFileSync(LOG, m + '\n'); console.log(m); };
 setTimeout(() => { say('HARD-EXIT timeout'); app.exit(3); }, 120000).unref();
 app.whenReady().then(async () => {
   fs.writeFileSync(LOG, '');
-  const w = new BrowserWindow({show:true, width:1180, height:800, webPreferences:{preload:path.join(process.cwd(),'preload.js'), contextIsolation:true}});
+  const w = new BrowserWindow({ show: true, width: 1180, height: 800, webPreferences: { preload: path.join(process.cwd(), 'out', 'preload.js'), contextIsolation: true } });
   try {
-    await w.loadFile(path.join(process.cwd(),'renderer/index.html'));
+    await w.loadFile(path.join(process.cwd(), 'renderer/index.html'));
     say('loaded');
-    await new Promise(r=>setTimeout(r,1000));
+    await new Promise<void>((r) => setTimeout(r, 1000));
     const res = await Promise.race([
       w.webContents.executeJavaScript(`
         new Promise(resolve => {
@@ -42,11 +43,11 @@ app.whenReady().then(async () => {
           }).catch(err => { out.fail = 'validate reject: ' + err; resolve(out); });
         })
       `, true),
-      new Promise(r => setTimeout(() => r({fail: 'executeJavaScript timeout 100s'}), 100000))
+      new Promise((r) => setTimeout(() => r({ fail: 'executeJavaScript timeout 100s' }), 100000)),
     ]);
     say('E2E ' + JSON.stringify(res, null, 1));
-    await new Promise(r=>setTimeout(r,1500));
-    fs.writeFileSync(path.join(process.cwd(),'.smoke','e2e-result.png'), (await w.webContents.capturePage()).toPNG());
+    await new Promise<void>((r) => setTimeout(r, 1500));
+    fs.writeFileSync(path.join(process.cwd(), '.smoke', 'e2e-result.png'), (await w.webContents.capturePage()).toPNG());
     const check = await w.webContents.executeJavaScript(`({
       page: document.querySelector('.page.active').id,
       artifacts: [...document.querySelectorAll('.artifact-name')].map(e => e.textContent),

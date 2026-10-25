@@ -7,3 +7,23 @@ android {
             }
         }
 }
+
+// Added by Expo Builder: sign release builds with MYAPP_UPLOAD_* from
+// gradle.properties instead of the prebuild template's debug keystore.
+if (project.hasProperty('MYAPP_UPLOAD_STORE_FILE')) {
+    android {
+        signingConfigs {
+            release {
+                storeFile file(MYAPP_UPLOAD_STORE_FILE)
+                storePassword MYAPP_UPLOAD_STORE_PASSWORD
+                keyAlias MYAPP_UPLOAD_KEY_ALIAS
+                keyPassword MYAPP_UPLOAD_KEY_PASSWORD
+            }
+        }
+        buildTypes {
+            release {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+}

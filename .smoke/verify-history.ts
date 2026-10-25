@@ -7,20 +7,20 @@
 //   - stat-path / trash-path IPC, clear-history button
 // Requires the REAL main.js IPC surface; runs with an isolated userData dir so
 // it never touches the real saved projects or build history.
-const { app, BrowserWindow } = require('electron');
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
+import { app, BrowserWindow } from 'electron';
+import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
 
 const FAKE = 'F:/Android Builder/.smoke/fake-project';
-const out = [];
-const say = (m) => { out.push(m); console.log('VERIFY ' + m); };
-const ok = (cond, msg) => { if (!cond) throw new Error(msg); };
+const out: string[] = [];
+const say = (m: string) => { out.push(m); console.log('VERIFY ' + m); };
+const ok = (cond: unknown, msg: string) => { if (!cond) throw new Error(msg); };
 setTimeout(() => { console.log('VERIFY HARD-TIMEOUT'); app.exit(3); }, 90000).unref();
 
 const tmpUserData = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-history-'));
 app.setPath('userData', tmpUserData);
-require('../main.js');
+require('../out/main.js');
 
 const D = 86400000;
 const now = Date.now();
@@ -29,7 +29,7 @@ const tmpFiles = [
   path.join(tmpUserData, 'Fake_App.v1.0.2.armeabi-v7a.apk'),
 ];
 const KEY = FAKE.toLowerCase();
-const seedBuilds = {
+const seedBuilds: Record<string, BuildRecord[]> = {
   [KEY]: [
     { id: 'b2', ts: now - 2 * 3600000, durationMs: 252000, status: 'failed', appName: 'Fake App',
       version: '1.0.3', versionCode: 10003, format: 'apk', archs: ['arm64-v8a'], signed: true, debug: false,
@@ -49,18 +49,19 @@ app.whenReady().then(async () => {
     const appJson = JSON.parse(fs.readFileSync(path.join(FAKE, 'app.json'), 'utf8'));
     const appJsonVersion = appJson.expo.version; // version field must default to this
 
-    let w = null;
+    let w: BrowserWindow | null = null;
     for (let i = 0; i < 40 && !w; i++) {
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise<void>((r) => setTimeout(r, 250));
       w = BrowserWindow.getAllWindows()[0] || null;
     }
     if (!w) throw new Error('main.js window never appeared');
-    await new Promise((r) => setTimeout(r, 900));
-    const js = (code) => w.webContents.executeJavaScript(code, true);
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    const shot = async (name) => {
-      if (w.isMinimized()) w.restore();
-      const img = await w.webContents.capturePage();
+    const win = w;
+    await new Promise<void>((r) => setTimeout(r, 900));
+    const js = (code: string) => win.webContents.executeJavaScript(code, true);
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    const shot = async (name: string) => {
+      if (win.isMinimized()) win.restore();
+      const img = await win.webContents.capturePage();
       fs.writeFileSync(path.join(process.cwd(), '.smoke', `verify-history-${name}.png`), img.toPNG());
     };
 
@@ -69,19 +70,19 @@ app.whenReady().then(async () => {
       `localStorage.setItem('ab.builds', ${JSON.stringify(JSON.stringify(seedBuilds))});` +
       `localStorage.setItem('ab.projects', ${JSON.stringify(JSON.stringify(seedProjects))}); true`
     );
-    await new Promise((resolve) => {
-      w.webContents.once('did-finish-load', () => setTimeout(resolve, 700));
-      w.webContents.reload();
+    await new Promise<void>((resolve) => {
+      win.webContents.once('did-finish-load', () => setTimeout(resolve, 700));
+      win.webContents.reload();
     });
 
     // The app reopens on the environment gate — pass it like a user would.
     for (let i = 0; i < 60; i++) {
       const ready = await js(`!document.querySelector('#btn-env-continue').disabled`);
       if (ready) break;
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise<void>((r) => setTimeout(r, 250));
     }
     await js(`document.querySelector('#btn-env-continue').click()`);
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise<void>((r) => setTimeout(r, 300));
 
     const listHint = await js(`[...document.querySelectorAll('.project-row-text small')].map((e) => e.textContent)`);
     say('list hints: ' + JSON.stringify(listHint));
@@ -153,7 +154,7 @@ app.whenReady().then(async () => {
     const prefill = await js(`document.querySelector('#field-version').value`);
     ok(prefill === appJsonVersion, `version field should default to app.json (${appJsonVersion}), got ${prefill}`);
 
-    const setVersion = (v) => js(`(() => {
+    const setVersion = (v: string) => js(`(() => {
       const i = document.querySelector('#field-version');
       i.value = ${JSON.stringify(v)};
       i.dispatchEvent(new Event('input'));
@@ -202,7 +203,7 @@ app.whenReady().then(async () => {
     ok(reb.visible && reb.title === 'Rebuild v1.0.2?', 'rebuild dialog wrong: ' + reb.title);
     ok(/replaces the previous build's output files/.test(reb.text), 'rebuild dialog text wrong');
     ok(reb.files.length === 2, 'expected 2 old files listed, got ' + reb.files.length);
-    ok(reb.files.some((f) => /already gone/.test(f)), 'trashed file should be listed as already gone');
+    ok(reb.files.some((f: string) => /already gone/.test(f)), 'trashed file should be listed as already gone');
     ok(reb.deleteBtn, 'delete button hidden while one old file still exists');
     await shot('4-rebuild-dialog');
 

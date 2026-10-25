@@ -61,3 +61,9 @@ window.flagOf = (cc) =>
   String.fromCodePoint(...[...cc].map((c) => 0x1f1a5 + c.charCodeAt(0)));
 
 window.countryName = (cc) => (window.COUNTRIES.find((c) => c[0] === cc) || [null, null])[1];
+
+window.flagOf = (cc: string): string =>
+  String.fromCodePoint(...[...cc].map((c) => 0x1f1a5 + c.charCodeAt(0)));
+
+window.countryName = (cc: string): string | null =>
+  (window.COUNTRIES.find((c) => c[0] === cc) || [null, null])[1];

@@ -1,20 +1,29 @@
 {
   "name": "expo-builder",
   "productName": "Expo Builder",
-  "version": "1.0.0",
+  "version": "1.8.4",
   "description": "Local APK/AAB builder & signer for any Expo project",
   "author": "aliehtesham",
-  "main": "main.js",
+  "main": "out/main.js",
   "license": "MIT",
   "private": true,
   "scripts": {
-    "start": "electron .",
-    "smoke": "electron . --smoke",
-    "dist": "electron-builder --win nsis"
+    "build": "tsc -p tsconfig.json && tsc -p renderer/tsconfig.json && tsc -p tsconfig.scripts.json",
+    "start": "npm run build && electron .",
+    "smoke": "npm run build && electron . --smoke",
+    "icons": "npm run build && node tools/make-icons.js",
+    "dist": "npm run build && electron-builder --win nsis",
+    "verify:naming": "electron .smoke/verify-naming.js",
+    "verify:inputs": "electron .smoke/verify-inputs.js",
+    "verify:history": "electron .smoke/verify-history.js",
+    "verify:vault": "electron .smoke/verify-vault.js"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
+    "@types/node": "^20.19.43",
     "electron": "^33.2.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "adm-zip": "^0.5.16"
@@ -26,10 +35,9 @@
       "output": "dist"
     },
     "files": [
-      "main.js",
-      "preload.js",
-      "lib/**/*",
-      "renderer/**/*",
+      "out/**/*",
+      "renderer/index.html",
+      "renderer/assets/**/*",
       "resources/**/*",
       "package.json"
     ],

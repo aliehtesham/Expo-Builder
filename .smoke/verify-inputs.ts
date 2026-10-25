@@ -1,14 +1,14 @@
 // Exercises EVERY input in the real app (text fields, the country combobox,
 // password toggles, generator, error states, dialogs) and checks geometry,
 // floating labels, sync and clipping. Writes screenshots to .smoke/inputs-*.png.
-const { app, BrowserWindow, dialog } = require('electron');
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
+import { app, BrowserWindow, dialog } from 'electron';
+import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
 
 const FAKE = 'F:/Android Builder/.smoke/fake-project';
-const results = [];
-const check = (name, ok, detail) => {
+const results: Array<{ name: string; ok: boolean; detail?: string }> = [];
+const check = (name: string, ok: boolean, detail?: string) => {
   results.push({ name, ok, detail });
   console.log(`CHECK ${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`);
 };
@@ -17,22 +17,23 @@ setTimeout(() => { console.log('VERIFY HARD-TIMEOUT'); app.exit(3); }, 90000).un
 const tmpUserData = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-inputs-'));
 app.setPath('userData', tmpUserData);
 dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [FAKE] });
-require('../main.js');
+require('../out/main.js');
 
 app.whenReady().then(async () => {
   try {
-    let w = null;
+    let w: BrowserWindow | null = null;
     for (let i = 0; i < 40 && !w; i++) {
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise<void>((r) => setTimeout(r, 250));
       w = BrowserWindow.getAllWindows()[0] || null;
     }
     if (!w) throw new Error('window never appeared');
-    await new Promise((r) => setTimeout(r, 1000));
-    const js = (code) => w.webContents.executeJavaScript(code, true);
-    const shot = async (name) => {
-      w.webContents.invalidate();
-      await new Promise((r) => setTimeout(r, 150));
-      fs.writeFileSync(path.join(process.cwd(), '.smoke', name), (await w.webContents.capturePage()).toPNG());
+    const win = w;
+    await new Promise<void>((r) => setTimeout(r, 1000));
+    const js = (code: string) => win.webContents.executeJavaScript(code, true);
+    const shot = async (name: string) => {
+      win.webContents.invalidate();
+      await new Promise<void>((r) => setTimeout(r, 150));
+      fs.writeFileSync(path.join(process.cwd(), '.smoke', name), (await win.webContents.capturePage()).toPNG());
     };
 
     // The app opens on the environment gate — pass it like a user would
@@ -40,14 +41,14 @@ app.whenReady().then(async () => {
     for (let i = 0; i < 60; i++) {
       const ready = await js(`!document.querySelector('#btn-env-continue').disabled`);
       if (ready) break;
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise<void>((r) => setTimeout(r, 250));
     }
     await js(`document.querySelector('#btn-env-continue').click()`);
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise<void>((r) => setTimeout(r, 300));
 
     // ── reach the config page through the real flow ──
     await js(`document.querySelector('#btn-pick').click()`);
-    await new Promise((r) => setTimeout(r, 1300));
+    await new Promise<void>((r) => setTimeout(r, 1300));
     const dlgGeo = await js(`(() => {
       const d = document.querySelector('#dlg-name').getBoundingClientRect();
       const f = document.querySelector('#wrap-name').getBoundingClientRect();
@@ -68,9 +69,9 @@ app.whenReady().then(async () => {
     check('name-dialog input accepts typing', dlgGeo.typeable === 'Input Test 2');
     check('name-dialog floating label lifts', dlgGeo.floatTransform !== 'none', dlgGeo.floatTransform);
     await js(`document.querySelector('#btn-name-ok').click()`);
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise<void>((r) => setTimeout(r, 300));
     await js(`document.querySelector('#btn-continue').click()`);
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise<void>((r) => setTimeout(r, 400));
 
     // ── geometry of the identity grid ──
     const geo = await js(`(() => {
@@ -132,9 +133,9 @@ app.whenReady().then(async () => {
 
     // ── country combobox ──
     await js(`document.querySelector('#signing-card').scrollIntoView({ block: 'center' })`);
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise<void>((r) => setTimeout(r, 250));
     await js(`document.querySelector('#country-btn').click()`);
-    await new Promise((r) => setTimeout(r, 450));
+    await new Promise<void>((r) => setTimeout(r, 450));
     const open = await js(`(() => {
       const menu = document.querySelector('#country-menu');
       const b = menu.getBoundingClientRect();
@@ -172,12 +173,12 @@ app.whenReady().then(async () => {
     })()`);
     check('country select sets value + closes', picked.value.includes('United States') && picked.closed, picked.value);
     await js(`document.querySelector('#country-btn').click()`);
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise<void>((r) => setTimeout(r, 250));
     await js(`(() => {
       const item = [...document.querySelectorAll('.combo-item')].find((e) => e.textContent.includes('United States'));
       if (item) item.click();
     })()`);
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise<void>((r) => setTimeout(r, 250));
 
     // ── password fields: reveal toggle + long value under trail buttons ──
     const pw = await js(`(() => {
@@ -220,7 +221,7 @@ app.whenReady().then(async () => {
 
     // ── generator dialog fills a password ──
     await js(`document.querySelector('[data-gen="keypass"]').click()`);
-    await new Promise((r) => setTimeout(r, 450));
+    await new Promise<void>((r) => setTimeout(r, 450));
     const gen = await js(`(() => {
       const out = document.querySelector('#gen-output').textContent;
       document.querySelector('#btn-gen-use').click();
@@ -245,7 +246,7 @@ app.whenReady().then(async () => {
       s.dispatchEvent(new Event('change'));
       return { collapseStarted: sf.classList.contains('collapsed') };
     })()`);
-    await new Promise((r) => setTimeout(r, 600)); // let the max-height transition finish
+    await new Promise<void>((r) => setTimeout(r, 600)); // let the max-height transition finish
     const tog2 = await js(`(() => {
       const sf = document.querySelector('#sign-fields');
       const s = document.querySelector('#field-signed');
@@ -254,7 +255,7 @@ app.whenReady().then(async () => {
       s.dispatchEvent(new Event('change'));
       return { collapsed };
     })()`);
-    await new Promise((r) => setTimeout(r, 600));
+    await new Promise<void>((r) => setTimeout(r, 600));
     const tog3 = await js(`(() => {
       const sf = document.querySelector('#sign-fields');
       return { reopened: getComputedStyle(sf).maxHeight !== '0px', cleared: sf.classList.contains('collapsed') === false };
@@ -264,10 +265,10 @@ app.whenReady().then(async () => {
 
     // ── back to page 1: rename dialog input again (stored-name prefill) ──
     await js(`document.querySelector('#btn-back-select').click()`);
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise<void>((r) => setTimeout(r, 300));
     await js(`document.querySelector('#btn-repick').click()`);
     await js(`document.querySelector('#btn-pick').click()`);
-    await new Promise((r) => setTimeout(r, 1300));
+    await new Promise<void>((r) => setTimeout(r, 1300));
     const again = await js(`(() => {
       const i = document.querySelector('#field-projectname');
       const v = i.value;

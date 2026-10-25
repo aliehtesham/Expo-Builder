@@ -765,6 +765,9 @@
 /* ── Page 1 · build history card ─────────────────────────────────────────── */
 .history-card { margin-top: 18px; animation: card-in var(--dur-3) var(--spring); }
 .projects-head .icon-btn { margin-left: auto; }
+/* When a head row holds two icon buttons (e.g. the vault fill/forget pair),
+   only the first one pushes to the right edge. */
+.projects-head .icon-btn + .icon-btn { margin-left: 0; }
 
 .history-row {
   width: 100%;
@@ -965,7 +968,6 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 
 .env-version {
   flex: none;
-  margin-left: auto;
   font-size: 12px;
   font-weight: 600;
   padding-top: 4px;
@@ -973,6 +975,223 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 .env-version.ok { color: var(--success); }
 .env-version.warn { color: #ffce7a; }
 .env-version.missing { color: var(--error); opacity: 0.85; }
+
+/* ── Newer-release detection (version chips + status line + dialog) ──────── */
+.env-version-block {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.env-version-block .env-version { margin-left: 0; padding-top: 0; }
+
+.ver-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 11px;
+  border-radius: var(--shape-full);
+  background: rgba(146, 122, 255, 0.13);
+  border: 1px solid rgba(160, 138, 255, 0.38);
+  color: #cbbcff;
+  font-size: 11.5px;
+  font-weight: 650;
+  font-family: var(--font-mono, 'Roboto Mono', monospace);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.ver-chip:hover { background: rgba(146, 122, 255, 0.26); transform: translateY(-1px); }
+.ver-chip:active { transform: translateY(0); }
+.ver-chip .icon { width: 12px; height: 12px; fill: currentColor; }
+
+.env-updates {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 10px;
+  font-size: 12px;
+  color: var(--on-surface-var);
+}
+.env-updates-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--on-surface-var);
+}
+.env-updates.busy .env-updates-dot {
+  background: var(--primary);
+  animation: env-pulse 1.1s ease-in-out infinite;
+}
+.env-updates.has-new { color: #ffce7a; }
+.env-updates.has-new .env-updates-dot { background: #ffce7a; }
+.env-updates.all-ok { color: var(--success); }
+.env-updates.all-ok .env-updates-dot { background: var(--success); }
+@keyframes env-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+.ver-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 18px;
+  padding: 7px 2px;
+  border-bottom: 1px solid var(--glass-stroke-soft);
+  font-size: 13px;
+}
+.ver-row:last-child { border-bottom: none; }
+.ver-row .k { color: var(--on-surface-var); }
+.ver-row .v { font-weight: 600; text-align: right; word-break: break-all; }
+
+.dlg-cmd {
+  margin: 10px 0 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--glass-stroke-soft);
+  font-size: 12px;
+  color: #cfe3ff;
+  word-break: break-all;
+}
+#dlg-version-meta { margin: 4px 0 2px; }
+#dlg-version-hint { margin-top: 10px; }
+
+/* Fits the fixed-height window; the install UI may never push it off-screen */
+#dlg-version {
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+#dlg-version .dialog-body { margin-bottom: 14px; }
+
+/* Update action: progress bar, phase text, log tail */
+.ver-progress { margin: 12px 0 4px; }
+.ver-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 7px;
+}
+.ver-progress-head .mono { font-size: 11.5px; color: var(--on-surface-var); }
+.ver-bar {
+  height: 7px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.ver-bar-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--primary), #7e57ff);
+  transition: width 0.3s ease;
+}
+.ver-bar-fill.ind {
+  width: 100%;
+  background: linear-gradient(90deg, transparent 0%, var(--primary) 40%, #7e57ff 60%, transparent 100%);
+  background-size: 50% 100%;
+  background-repeat: no-repeat;
+  animation: ver-ind 1.1s linear infinite;
+}
+.ver-bar-fill.done { background: var(--success); }
+.ver-bar-fill.failed { background: var(--error); }
+@keyframes ver-ind {
+  from { background-position: -60% 0; }
+  to { background-position: 160% 0; }
+}
+.ver-log {
+  margin-top: 9px;
+  padding: 8px 10px;
+  max-height: 108px;
+  overflow-y: auto;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid var(--glass-stroke-soft);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--on-surface-var);
+  word-break: break-all;
+}
+
+/* ── Windows Hello vault unlock (freeze + blur overlay) ──────────────────── */
+/* Sits above every other layer (dialogs 50, snackbar 60): while the OS
+   consent prompt is on screen the whole app is frozen behind it. */
+.vault-auth {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  background: rgba(5, 3, 10, 0.45);
+  -webkit-backdrop-filter: blur(16px) saturate(115%);
+  backdrop-filter: blur(16px) saturate(115%);
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--std);
+}
+.vault-auth.show { opacity: 1; }
+
+.vault-card {
+  width: min(400px, calc(100vw - 60px));
+  text-align: center;
+  border-radius: var(--shape-xl);
+  padding: 34px 34px 22px;
+  background: rgba(24, 18, 40, 0.78);
+  border: 1px solid var(--glass-stroke);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  transform: scale(0.94);
+  transition: transform var(--dur-3) var(--spring);
+}
+.vault-auth.show .vault-card { transform: scale(1); }
+.vault-card h2 { font-size: 21px; margin-bottom: 8px; }
+.vault-card .dialog-body { margin-bottom: 18px; }
+
+.vault-fp {
+  position: relative;
+  width: 84px; height: 84px;
+  margin: 0 auto 18px;
+  border-radius: 28px;
+  display: grid;
+  place-items: center;
+  color: var(--primary);
+  background: rgba(160, 120, 255, 0.14);
+  border: 1px solid rgba(160, 120, 255, 0.3);
+}
+.vault-fp .icon { width: 44px; height: 44px; }
+/* Breathing ring around the fingerprint while waiting for the OS prompt. */
+.vault-fp::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border-radius: 33px;
+  border: 2px solid rgba(160, 120, 255, 0.45);
+  animation: vault-pulse 1.8s var(--std) infinite;
+}
+@keyframes vault-pulse {
+  0% { transform: scale(0.92); opacity: 0.9; }
+  70%, 100% { transform: scale(1.18); opacity: 0; }
+}
+
+/* After a successful unlock the two password fields flash once so it is
+   obvious where the values landed (they render as dots). */
+.field.vault-filled input {
+  animation: vault-fill-glow 1.5s var(--std);
+}
+@keyframes vault-fill-glow {
+  0% { box-shadow: 0 0 0 0 rgba(160, 120, 255, 0); }
+  30% { border-color: var(--primary); box-shadow: 0 0 0 5px rgba(160, 120, 255, 0.28); }
+  100% { box-shadow: 0 0 0 0 rgba(160, 120, 255, 0); }
+}
+
+/* ── Keystore-reset dialog (asking mode) ─────────────────────────────────── */
+/* Three action buttons + long paths: let the actions row wrap rather than
+   overflow the card. */
+#dlg-keyreset .dialog-actions { flex-wrap: wrap; }
+#dlg-keyreset .rebuild-file .mono { word-break: break-all; }
+#dlg-keyreset .rebuild-file .tag { text-align: right; }
 
 /* ── Responsive ──────────────────────────────────────────────────────────── */
 @media (max-width: 1080px) {

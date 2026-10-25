@@ -17,6 +17,7 @@
 #   ARCHS               comma list for -PreactNativeArchitectures (apk splits)
 #   RELOCATE            1 = move heavy gradle dirs to RELOCATE_ROOT (default 1)
 #   RELOCATE_ROOT       msys path on a big disk, default /c/ExpoBuilds
+#   TARGET_SDK          optional targetSdkVersion (API level) pin for this build
 #   DEBUG               1 = set -x + gradle --stacktrace --info
 #   ALLOW_DEBUG_SIGNED  passthrough guard for a project's verify-signing.sh
 #   KEYSTORE_BASE64     optional base64 of an existing keystore to reuse
@@ -142,6 +143,7 @@ generate_keystore() {
 
 SIGNED_FROM=""
 KEYSTORE_REPORT=""
+TARGET_SDK="${TARGET_SDK:-}"
 if [ "$SIGNED" = "1" ]; then
   phase keystore
   SAFE_ALIAS="$KEY_ALIAS"
@@ -180,7 +182,10 @@ if [ "$SIGNED" = "1" ]; then
         say "Keystore '$keyfile' is INVALID for alias '$SAFE_ALIAS' with the configured passwords. Build aborted."
         say "  The file was NOT modified. Options:"
         say "    - pass matching key alias / passwords in the form, or"
-        say "    - delete the file from '$KEY_DIR/' and rebuild to generate a fresh key."
+        say "    - archive '$KEY_DIR/' and rebuild to generate a fresh key."
+        # Machine-readable marker: the renderer offers to archive the old key.
+        printf '@@KEYFAIL %s
+' "$keyfile"
         exit 1
       fi
       SIGNED_FROM="$keyfile"
@@ -214,6 +219,58 @@ sed -i '/^expo\.useLegacyPackaging/d' android/gradle.properties
     echo "MYAPP_UPLOAD_KEY_PASSWORD=$KEY_PASSWORD"
   fi
 } >> android/gradle.properties
+
+# Optional targetSdkVersion pin. The expo-root-project gradle plugin resolves
+# targetSdk via extra.setIfNotExist, so a gradle.properties property written
+# here wins for this build (prebuild regenerates everything each run, so the
+# pin never leaks into the project's committed files).
+if [ -n "$TARGET_SDK" ]; then
+  say "Pinning Android targetSdkVersion=$TARGET_SDK for this build..."
+  echo "targetSdkVersion=$TARGET_SDK" >> android/gradle.properties
+  # AGP rejects targetSdk > compileSdk; raise compileSdk to match when the
+  # toolchain default (react-native's version catalog) is lower.
+  COMPILE_DEFAULT=""
+  CATALOG="node_modules/react-native/gradle/libs.versions.toml"
+  if [ -f "$CATALOG" ]; then
+    COMPILE_DEFAULT=$(grep -m1 -E '^compileSdk[[:space:]]*=' "$CATALOG" | grep -oE '[0-9]+' || true)
+  fi
+  if [ -z "$COMPILE_DEFAULT" ] || [ "$TARGET_SDK" -gt "$COMPILE_DEFAULT" ]; then
+    say "compileSdk default is ${COMPILE_DEFAULT:-unknown} - raising compileSdkVersion=$TARGET_SDK (targetSdk must not exceed compileSdk)."
+    echo "compileSdkVersion=$TARGET_SDK" >> android/gradle.properties
+    if [ -n "$ANDROID_HOME" ] && [ ! -d "$ANDROID_HOME/platforms/android-$TARGET_SDK" ]; then
+      say "NOTE: platform android-$TARGET_SDK is not installed - install it via the Dependencies page if the gradle build fails to find it."
+    fi
+  fi
+fi
+
+# The expo prebuild template only defines a debug signing config and points the
+# release build type at it; nothing reads MYAPP_UPLOAD_*, so without this the
+# release APK/AAB ships signed with the debug key (CN=Android Debug). Wire the
+# properties up after prebuild (which regenerates build.gradle every time).
+if [ "$SIGNED" = "1" ]; then
+  cat >> android/app/build.gradle <<'EOF'
+
+// Added by Expo Builder: sign release builds with MYAPP_UPLOAD_* from
+// gradle.properties instead of the prebuild template's debug keystore.
+if (project.hasProperty('MYAPP_UPLOAD_STORE_FILE')) {
+    android {
+        signingConfigs {
+            release {
+                storeFile file(MYAPP_UPLOAD_STORE_FILE)
+                storePassword MYAPP_UPLOAD_STORE_PASSWORD
+                keyAlias MYAPP_UPLOAD_KEY_ALIAS
+                keyPassword MYAPP_UPLOAD_KEY_PASSWORD
+            }
+        }
+        buildTypes {
+            release {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+}
+EOF
+fi
 
 # ----------------------------------------------------------------------- gradle
 phase gradle

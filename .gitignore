@@ -4,5 +4,12 @@ node_modules/
 # Build output
 dist/
 
+# Compiled TypeScript output (run `npm run build`)
+out/
+*.tsbuildinfo
+renderer/assets/*.js
+.smoke/*.js
+tools/*.js
+
 # Runtime logs
 *.log

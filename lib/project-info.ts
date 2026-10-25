@@ -2,15 +2,30 @@
 // Pure Node helpers for validating an Expo project and applying version bumps.
 // Usable both from the Electron main process and from plain node CLI tests.
 
-const fs = require('fs');
-const path = require('path');
+import * as fs from 'fs';
+import * as path from 'path';
 
-function readJson(file) {
-  const raw = fs.readFileSync(file, 'utf8');
-  return JSON.parse(raw);
+interface PkgJson {
+  name?: string;
+  version?: string;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
 }
 
-function detectPackageManager(dir) {
+interface ExpoAppJson {
+  expo?: {
+    name?: string;
+    slug?: string;
+    version?: string;
+    android?: { versionCode?: number; package?: string };
+  };
+}
+
+function readJson(file: string): unknown {
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+function detectPackageManager(dir: string): { pm: string; lockfile: string } {
   if (fs.existsSync(path.join(dir, 'yarn.lock'))) return { pm: 'yarn', lockfile: 'yarn.lock' };
   if (fs.existsSync(path.join(dir, 'pnpm-lock.yaml'))) return { pm: 'pnpm', lockfile: 'pnpm-lock.yaml' };
   if (fs.existsSync(path.join(dir, 'bun.lock')) || fs.existsSync(path.join(dir, 'bun.lockb')))
@@ -18,7 +33,7 @@ function detectPackageManager(dir) {
   return { pm: 'npm', lockfile: 'package-lock.json' };
 }
 
-function findAppConfig(dir) {
+function findAppConfig(dir: string): string | null {
   for (const name of ['app.config.js', 'app.config.ts', 'app.config.cjs', 'app.config.mjs']) {
     if (fs.existsSync(path.join(dir, name))) return name;
   }
@@ -29,7 +44,7 @@ function findAppConfig(dir) {
  * Validate that `dir` is an Expo project and collect the info the UI pre-fills
  * from. Returns { ok: true, info } or { ok: false, error }.
  */
-function validateProject(dir) {
+function validateProject(dir: string): ValidateResult {
   try {
     const stat = fs.statSync(dir);
     if (!stat.isDirectory()) {
@@ -44,9 +59,9 @@ function validateProject(dir) {
     return { ok: false, error: 'No package.json found — this folder is not an Expo project.' };
   }
 
-  let pkg;
+  let pkg: PkgJson;
   try {
-    pkg = readJson(pkgPath);
+    pkg = readJson(pkgPath) as PkgJson;
   } catch {
     return { ok: false, error: 'package.json could not be parsed (invalid JSON).' };
   }
@@ -61,12 +76,12 @@ function validateProject(dir) {
 
   const appJsonPath = path.join(dir, 'app.json');
   const appConfigName = findAppConfig(dir);
-  let expoCfg = null;
+  let expoCfg: ExpoAppJson['expo'] | null = null;
   let appJsonParsed = false;
 
   if (fs.existsSync(appJsonPath)) {
     try {
-      expoCfg = readJson(appJsonPath).expo || null;
+      expoCfg = (readJson(appJsonPath) as ExpoAppJson).expo || null;
       appJsonParsed = true;
     } catch {
       return { ok: false, error: 'app.json could not be parsed (invalid JSON).' };
@@ -104,7 +119,7 @@ function validateProject(dir) {
 }
 
 /** Mahameh-style scheme: 1.37.18 -> 13718 (major*10000 + minor*100 + patch). */
-function computeVersionCode(version) {
+function computeVersionCode(version?: string | null): number {
   const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(version || ''));
   if (!m) return 1;
   return Number(m[1]) * 10000 + Number(m[2]) * 100 + Number(m[3]);
@@ -116,19 +131,22 @@ function computeVersionCode(version) {
  * instead, the app.json write is skipped and a note is returned (the config
  * file must be updated by hand or already handles versions).
  */
-function applyVersions(dir, { version, versionCode }) {
-  const notes = [];
+function applyVersions(dir: string, { version, versionCode }: { version?: string; versionCode?: number }): {
+  applied: { packageJson: boolean; appJson: boolean };
+  notes: string[];
+} {
+  const notes: string[] = [];
   const applied = { packageJson: false, appJson: false };
 
   const pkgPath = path.join(dir, 'package.json');
-  const pkg = readJson(pkgPath);
+  const pkg = readJson(pkgPath) as PkgJson;
   pkg.version = version;
   fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
   applied.packageJson = true;
 
   const appJsonPath = path.join(dir, 'app.json');
   if (fs.existsSync(appJsonPath)) {
-    const app = readJson(appJsonPath);
+    const app = readJson(appJsonPath) as ExpoAppJson;
     if (app.expo) {
       app.expo.version = version;
       if (versionCode && app.expo.android) {
@@ -152,13 +170,13 @@ function applyVersions(dir, { version, versionCode }) {
   return { applied, notes };
 }
 
-module.exports = { validateProject, applyVersions, computeVersionCode, detectPackageManager };
+export { validateProject, applyVersions, computeVersionCode, detectPackageManager };
 
-if (require.main === module) {
-  // CLI: node lib/project-info.js <dir>
+if (require.main?.filename === __filename) {
+  // CLI: node out/lib/project-info.js <dir>
   const target = process.argv[2];
   if (!target) {
-    console.error('usage: node lib/project-info.js <projectDir>');
+    console.error('usage: node out/lib/project-info.js <projectDir>');
     process.exit(2);
   }
   console.log(JSON.stringify(validateProject(target), null, 2));

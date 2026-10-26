@@ -1086,11 +1086,13 @@
   }
 
   // ─────────────────── encrypted signing-password vault ──────────────────────
-  // Generated or typed signing passwords are saved encrypted (Windows DPAPI,
-  // per project) whenever they are applied or a build starts. Opening the form
-  // again asks for Windows Hello (fingerprint / PIN / face) and autofills.
+  // Generated or typed signing credentials (key alias + passwords) are saved
+  // encrypted (Windows DPAPI, per project) whenever they are applied or a
+  // build starts. Opening the form again asks for Windows Hello (fingerprint /
+  // PIN / face) and autofills them — so the alias always matches the keystore
+  // the passwords were saved with instead of a fresh suggestion.
 
-  const vaultFields = ['keypass', 'storepass'] as const;
+  const vaultFields = ['alias', 'keypass', 'storepass'] as const;
   type VaultField = (typeof vaultFields)[number];
 
   const vaultInput = (field: VaultField) => $<HTMLInputElement>(`#field-${field}`);
@@ -1171,15 +1173,15 @@
     hideVaultAuth();
     if (!res.ok) {
       if (res.reason === 'denied' && vaultAuthCanceled) {
-        snack('Unlock canceled — the saved passwords stay locked.');
+        snack('Unlock canceled — the saved credentials stay locked.');
         return;
       }
       if (manual || res.reason === 'denied') {
         const msgs: Record<Extract<VaultLoadResult, { ok: false }>['reason'], string> = {
-          empty: 'No passwords saved for this project yet.',
+          empty: 'No signing credentials saved for this project yet.',
           denied: 'Locked — Windows Hello did not verify.',
-          'no-encryption': 'Windows refused to decrypt the saved passwords.',
-          corrupt: 'Saved passwords could not be decrypted — forget them and re-enter.',
+          'no-encryption': 'Windows refused to decrypt the saved signing credentials.',
+          corrupt: 'Saved credentials could not be decrypted — forget them and re-enter.',
         };
         snack(msgs[res.reason]);
       }
@@ -1200,9 +1202,9 @@
         setTimeout(() => wrap.classList.remove('vault-filled'), 1800);
       }
     }
-    if (res.auth === 'verified') snack('Saved passwords unlocked with Windows Hello.');
+    if (res.auth === 'verified') snack('Saved signing credentials unlocked with Windows Hello.');
     else if (res.auth === 'unavailable') snack('Filled from the encrypted vault — Windows Hello is not set up on this PC.');
-    else snack('Filled saved passwords.');
+    else snack('Filled saved signing credentials.');
   }
 
   // ─────────────────────────────── page 2 ──────────────────────────────────
@@ -1211,7 +1213,9 @@
     state.versionCodeDirty = false;
     $<HTMLInputElement>('#field-versioncode').value = String(info.versionCode || computeVersionCode(info.version));
     if (info.hasPersistentKey) {
-      // Suggest an alias derived from the project so keys stay distinguishable.
+      // Placeholder until the vault autofill lands (or when nothing is saved
+      // yet): suggest an alias derived from the project so keys stay
+      // distinguishable.
       if (!$<HTMLInputElement>('#field-alias').value) $<HTMLInputElement>('#field-alias').value = `${(info.slug || 'app').toLowerCase()}.release`;
     }
     clearAllErrors();
@@ -1689,10 +1693,10 @@
     startTimer();
     setPage('build');
 
-    // Remember the signing passwords (encrypted, per project) so the next
+    // Remember the signing credentials (encrypted, per project) so the next
     // build of this project can autofill them after a Windows Hello check.
     if (cfg.signed) {
-      await saveSecrets(['keypass', 'storepass']);
+      await saveSecrets(['alias', 'keypass', 'storepass']);
     }
 
     const res = await window.builder.startBuild(cfg);
@@ -2599,6 +2603,7 @@
       // Windows Hello unlock overlay (screenshots only): the frozen blurred
       // state, then the success path fading away + autofilling the fields.
       vaultAuth() {
+        $<HTMLInputElement>('#field-alias').value = '';
         $<HTMLInputElement>('#field-keypass').value = '';
         $<HTMLInputElement>('#field-storepass').value = '';
         showVaultAuth();
@@ -2609,15 +2614,16 @@
           snack('Locked — Windows Hello did not verify.');
           return;
         }
+        $<HTMLInputElement>('#field-alias').value = 'mahameh.faslevasl';
         $<HTMLInputElement>('#field-keypass').value = 'nL54qLNBP2o8';
         $<HTMLInputElement>('#field-storepass').value = 'k8hi0d9x4E6O';
-        for (const id of ['#wrap-keypass', '#wrap-storepass']) {
+        for (const id of ['#wrap-alias', '#wrap-keypass', '#wrap-storepass']) {
           const wrap = $(id);
           wrap.classList.remove('vault-filled');
           void wrap.offsetWidth;
           wrap.classList.add('vault-filled');
         }
-        snack('Saved passwords unlocked with Windows Hello.');
+        snack('Saved signing credentials unlocked with Windows Hello.');
       },
       countryOpen(query?: string) {
         $('#country-btn').click();

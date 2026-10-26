@@ -196,7 +196,7 @@ app.whenReady().then(async () => {
       visible: !document.querySelector('#dlg-rebuild').classList.contains('hidden'),
       title: document.querySelector('#dlg-rebuild-title').textContent,
       text: document.querySelector('#dlg-rebuild-text').textContent,
-      files: [...document.querySelectorAll('#rebuild-file, .rebuild-file')].map((e) => e.textContent),
+      files: [...document.querySelectorAll('#dlg-rebuild .rebuild-file')].map((e) => e.textContent),
       deleteBtn: !document.querySelector('#btn-rebuild-delete').classList.contains('hidden'),
     })`);
     say('rebuild dialog: ' + JSON.stringify(reb));

@@ -170,10 +170,11 @@ type TrashResult = { ok: true } | { ok: false; error: string };
 /** Result of archiving the old signing key (android-key → android-key-old[-N]). */
 type KeyResetResult = { ok: true; from: string; to: string } | { ok: false; error: string };
 
-/** Signing passwords stored in the per-project encrypted vault. */
+/** Signing credentials stored in the per-project encrypted vault. */
 interface VaultSecrets {
   keypass?: string;
   storepass?: string;
+  alias?: string;
 }
 
 /** How the vault entry was unlocked: 'verified' = Windows Hello consent. */

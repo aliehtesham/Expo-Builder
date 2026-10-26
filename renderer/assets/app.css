@@ -377,7 +377,10 @@
   z-index: 20;
   display: none;
   border-radius: var(--shape-l);
-  background: rgba(22, 17, 38, 0.82);
+  /* Near-solid: this menu floats directly over the form fields (no scrim),
+     and at glass opacities they ghost straight through it — placeholder text
+     and trail icons read as if they were inside the search input. */
+  background: rgba(24, 18, 40, 0.97);
   -webkit-backdrop-filter: var(--blur-2);
   backdrop-filter: var(--blur-2);
   box-shadow: 0 30px 70px rgba(0, 0, 0, 0.55);
@@ -430,6 +433,7 @@
 
 .combo-search input {
   flex: 1;
+  padding: 0;
   background: none;
   border: none;
   outline: none;
@@ -484,6 +488,12 @@
 /* The open menu lives inside this card's backdrop-filter stacking context, so the
    card itself must rise above the sticky summary bar (z-index 10) while open. */
 #signing-card:has(.combo-field.open) { position: relative; z-index: 12; }
+
+/* The dropdown is absolutely positioned inside .sign-fields, whose overflow:hidden
+   (kept for its collapse animation) clips it at the box borders — below the button
+   and, once the menu flips open-up, above it. While the menu is open let it paint
+   outside the box; the menu is always closed again before a collapse starts. */
+#signing-card:has(.combo-field.open) .sign-fields { overflow: visible; }
 
 /* Text must not slide under the generate/show trail buttons. */
 #wrap-keypass input,
@@ -1124,6 +1134,7 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
   position: fixed;
   inset: 0;
   z-index: 70;
+  border-radius: var(--window-radius);
   display: grid;
   place-items: center;
   background: rgba(5, 3, 10, 0.45);

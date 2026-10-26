@@ -220,10 +220,10 @@
         <div class="card glass form-card" id="signing-card">
           <div class="projects-head">
             <h3 class="section-title">Signing</h3>
-            <button type="button" class="icon-btn sm" id="btn-vault-fill" title="Autofill saved passwords — unlocks with Windows Hello (fingerprint / PIN)" aria-label="Autofill saved passwords with Windows Hello">
+            <button type="button" class="icon-btn sm" id="btn-vault-fill" title="Autofill saved signing credentials — unlocks with Windows Hello (fingerprint / PIN)" aria-label="Autofill saved signing credentials with Windows Hello">
               <svg viewBox="0 0 24 24" class="icon"><path d="M17.81 4.47c-.13 0-.26-.05-.36-.15a9.8 9.8 0 0 0-3.42-2.18.51.51 0 0 1-.32-.64c.08-.27.35-.42.63-.34 1.4.5 2.66 1.3 3.83 2.32.2.19.22.51.04.71-.1.19-.26.28-.42.28zM7.21 4.31c-.14 0-.28-.06-.39-.17-.19-.21-.17-.53.05-.74C7.9 2.4 9.03 1.74 10.25 1.32c.28-.09.55.06.64.33.09.27-.06.55-.33.64-1.09.38-2.11 1-2.99 1.81-.1.14-.24.21-.36.21zm9.94 16.66c-.14 0-.28-.06-.39-.17-.19-.21-.17-.53.05-.74 1.53-1.37 2.46-3.22 2.61-5.21.02-.28.26-.5.55-.47.28.02.49.27.47.55-.17 2.27-1.22 4.37-2.95 5.91-.1.09-.22.13-.34.13zm-10.32.02c-.12 0-.24-.04-.34-.12-1.35-1.14-2.29-2.72-2.64-4.45-.06-.27.12-.55.39-.6.28-.06.55.12.6.39.31 1.5 1.12 2.87 2.28 3.85.21.19.24.5.05.71-.09.14-.21.22-.34.22zM12 17.5c-2.05 0-3.94-.84-5.3-2.36-.19-.21-.17-.53.04-.72.21-.19.53-.17.72.04A5.96 5.96 0 0 0 12 16.25c1.62 0 3.15-.63 4.3-1.78.2-.2.52-.2.72 0s.2.52 0 .72A7.2 7.2 0 0 1 12 17.5zm0-3.25c-1.49 0-2.88-.77-3.69-2.04a.51.51 0 0 1 .16-.7c.24-.15.55-.08.7.16.62 1.02 1.75 1.66 2.83 1.66 1.09 0 2.22-.64 2.84-1.66.15-.24.46-.31.7-.16.24.15.31.46.16.7A4.9 4.9 0 0 1 12 14.25zm-3.5-4.5c-.28 0-.5-.22-.5-.5 0-2.2 1.79-4 4-4s4 1.8 4 4c0 .28-.22.5-.5.5s-.5-.22-.5-.5c0-1.65-1.35-3-3-3s-3 1.35-3 3c0 .28-.22.5-.5.5z"/></svg>
             </button>
-            <button type="button" class="icon-btn sm hidden" id="btn-vault-forget" title="Forget the saved passwords for this project" aria-label="Forget saved passwords">
+            <button type="button" class="icon-btn sm hidden" id="btn-vault-forget" title="Forget the saved signing credentials for this project" aria-label="Forget saved signing credentials">
               <svg viewBox="0 0 24 24" class="icon"><path d="M6 19c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
             </button>
           </div>
@@ -294,7 +294,7 @@
                 <p class="field-err" id="err-storepass"></p>
               </div>
             </div>
-            <p class="note">Passwords are only used locally: <code>keytool</code> on this machine and <code>android/gradle.properties</code> of the project. At least 6 characters each. They are saved <b>encrypted</b> (Windows user-bound) for this project — opening it again asks for <b>Windows Hello</b> (fingerprint / PIN) before they are filled in.</p>
+            <p class="note">Passwords are only used locally: <code>keytool</code> on this machine and <code>android/gradle.properties</code> of the project. At least 6 characters each. The key alias and passwords are saved <b>encrypted</b> (Windows user-bound) for this project — opening it again asks for <b>Windows Hello</b> (fingerprint / PIN) before they are filled in.</p>
           </div>
         </div>
 
@@ -434,7 +434,7 @@
         <svg viewBox="0 0 24 24" class="icon"><path d="M17.81 4.47c-.13 0-.26-.05-.36-.15a9.8 9.8 0 0 0-3.42-2.18.51.51 0 0 1-.32-.64c.08-.27.35-.42.63-.34 1.4.5 2.66 1.3 3.83 2.32.2.19.22.51.04.71-.1.19-.26.28-.42.28zM7.21 4.31c-.14 0-.28-.06-.39-.17-.19-.21-.17-.53.05-.74C7.9 2.4 9.03 1.74 10.25 1.32c.28-.09.55.06.64.33.09.27-.06.55-.33.64-1.09.38-2.11 1-2.99 1.81-.1.14-.24.21-.36.21zm9.94 16.66c-.14 0-.28-.06-.39-.17-.19-.21-.17-.53.05-.74 1.53-1.37 2.46-3.22 2.61-5.21.02-.28.26-.5.55-.47.28.02.49.27.47.55-.17 2.27-1.22 4.37-2.95 5.91-.1.09-.22.13-.34.13zm-10.32.02c-.12 0-.24-.04-.34-.12-1.35-1.14-2.29-2.72-2.64-4.45-.06-.27.12-.55.39-.6.28-.06.55.12.6.39.31 1.5 1.12 2.87 2.28 3.85.21.19.24.5.05.71-.09.14-.21.22-.34.22zM12 17.5c-2.05 0-3.94-.84-5.3-2.36-.19-.21-.17-.53.04-.72.21-.19.53-.17.72.04A5.96 5.96 0 0 0 12 16.25c1.62 0 3.15-.63 4.3-1.78.2-.2.52-.2.72 0s.2.52 0 .72A7.2 7.2 0 0 1 12 17.5zm0-3.25c-1.49 0-2.88-.77-3.69-2.04a.51.51 0 0 1 .16-.7c.24-.15.55-.08.7.16.62 1.02 1.75 1.66 2.83 1.66 1.09 0 2.22-.64 2.84-1.66.15-.24.46-.31.7-.16.24.15.31.46.16.7A4.9 4.9 0 0 1 12 14.25zm-3.5-4.5c-.28 0-.5-.22-.5-.5 0-2.2 1.79-4 4-4s4 1.8 4 4c0 .28-.22.5-.5.5s-.5-.22-.5-.5c0-1.65-1.35-3-3-3s-3 1.35-3 3c0 .28-.22.5-.5.5z"/></svg>
       </div>
       <h2 id="vault-auth-title">Confirm it&rsquo;s you</h2>
-      <p class="dialog-body" id="vault-auth-body">Windows Hello is verifying you so the saved signing passwords can be filled in. Use the <b>Windows Security</b> prompt — fingerprint, face or PIN. The app resumes as soon as you&rsquo;re verified.</p>
+      <p class="dialog-body" id="vault-auth-body">Windows Hello is verifying you so the saved signing credentials can be filled in. Use the <b>Windows Security</b> prompt — fingerprint, face or PIN. The app resumes as soon as you&rsquo;re verified.</p>
       <div class="row end dialog-actions">
         <button type="button" class="btn text" id="btn-vault-cancel">Cancel</button>
       </div>

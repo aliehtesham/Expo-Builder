@@ -1,7 +1,8 @@
-// Verifies the encrypted signing-password vault end to end in the real app:
-// save (safeStorage/DPAPI), status, load round-trip (Windows Hello is skipped
-// via AB_NO_HELLO=1 — run this test with that set), partial-update merge, the
-// on-disk file holding no plaintext, and forget.
+// Verifies the encrypted signing-credentials vault end to end in the real app:
+// save (safeStorage/DPAPI) of the key alias + passwords, status, load
+// round-trip (Windows Hello is skipped via AB_NO_HELLO=1 — run this test with
+// that set), partial-update merge, the on-disk file holding no plaintext,
+// and forget.
 // Runs with an isolated userData dir so it never touches the real vault.
 import { app, BrowserWindow } from 'electron';
 import * as path from 'path';
@@ -41,27 +42,27 @@ app.whenReady().then(async () => {
     const noCancel = await js(`window.builder.cancelVaultAuth()`);
     ok(noCancel && noCancel.ok === false, 'cancelVaultAuth with no pending prompt is a no-op');
 
-    // 2. Save + status + decrypt round-trip.
-    const saved = await js(`window.builder.saveSecrets(${JSON.stringify(FAKE)}, { keypass: 'kp-secret-1', storepass: 'sp-secret-1' })`);
+    // 2. Save + status + decrypt round-trip (alias travels with the passwords).
+    const saved = await js(`window.builder.saveSecrets(${JSON.stringify(FAKE)}, { alias: 'my.app.release', keypass: 'kp-secret-1', storepass: 'sp-secret-1' })`);
     ok(saved && saved.ok === true, 'saveSecrets ok');
     const st = await js(`window.builder.secretStatus(${JSON.stringify(FAKE)})`);
     ok(st && st.has === true, 'status reports the saved entry');
     const loaded = await js(`window.builder.loadSecrets(${JSON.stringify(FAKE)})`);
-    ok(!!loaded && loaded.ok === true && loaded.secrets.keypass === 'kp-secret-1' && loaded.secrets.storepass === 'sp-secret-1',
+    ok(!!loaded && loaded.ok === true && loaded.secrets.alias === 'my.app.release' && loaded.secrets.keypass === 'kp-secret-1' && loaded.secrets.storepass === 'sp-secret-1',
       `round-trip decrypts (auth=${loaded && loaded.ok ? loaded.auth : loaded && loaded.reason})`);
 
-    // 3. Partial update merges — the untouched field must survive.
+    // 3. Partial update merges — the untouched fields must survive.
     const upd = await js(`window.builder.saveSecrets(${JSON.stringify(FAKE)}, { keypass: 'kp-secret-2' })`);
     ok(upd && upd.ok === true, 'partial save ok');
     const loaded2 = await js(`window.builder.loadSecrets(${JSON.stringify(FAKE)})`);
-    ok(!!loaded2 && loaded2.ok === true && loaded2.secrets.keypass === 'kp-secret-2' && loaded2.secrets.storepass === 'sp-secret-1',
-      'partial update keeps the other password');
+    ok(!!loaded2 && loaded2.ok === true && loaded2.secrets.keypass === 'kp-secret-2' && loaded2.secrets.storepass === 'sp-secret-1' && loaded2.secrets.alias === 'my.app.release',
+      'partial update keeps the other password and the alias');
 
     // 4. The on-disk vault file must hold no plaintext — only base64 blobs.
     const vaultPath = path.join(tmpUserData, 'password-vault.json');
     const raw = fs.readFileSync(vaultPath, 'utf8');
-    ok(!raw.includes('kp-secret-2') && !raw.includes('sp-secret-1'), 'vault file contains no plaintext');
-    ok(raw.includes('keypass'), 'vault file contains the encrypted blobs');
+    ok(!raw.includes('kp-secret-2') && !raw.includes('sp-secret-1') && !raw.includes('my.app.release'), 'vault file contains no plaintext');
+    ok(raw.includes('keypass') && raw.includes('alias'), 'vault file contains the encrypted blobs');
 
     // 5. Forget clears the entry.
     const forgot = await js(`window.builder.forgetSecrets(${JSON.stringify(FAKE)})`);

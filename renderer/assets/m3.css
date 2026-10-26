@@ -50,6 +50,9 @@
   --shape-l: 22px;
   --shape-xl: 28px;
   --shape-full: 999px;
+  /* Window silhouette — mirrors the top bar's pill curve. The frameless
+     window is transparent, so every full-bleed layer clips itself to this. */
+  --window-radius: 48px;
 
   /* ── Type ─────────────────────────────────────────────────────────────── */
   --font: "Roboto Flex", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
@@ -76,7 +79,7 @@ body {
   font-size: 15px;
   line-height: 1.5;
   color: var(--on-surface);
-  background: #0a0d17;
+  background: transparent; /* the rounded .bg-scene paints the app color */
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
   user-select: none;
@@ -112,6 +115,7 @@ code {
   inset: 0;
   z-index: -1;
   overflow: hidden;
+  border-radius: var(--window-radius);
   background:
     radial-gradient(120% 90% at 85% -10%, #221a48 0%, transparent 60%),
     radial-gradient(100% 80% at -10% 110%, #0d2440 0%, transparent 55%),
@@ -250,8 +254,10 @@ code {
   margin-bottom: 20px;
 }
 
-.field input[type="text"],
-.field input[type="password"] {
+/* Direct children only: nested inputs (e.g. the country menu's search box)
+   must not inherit the boxed field look. */
+.field > input[type="text"],
+.field > input[type="password"] {
   width: 100%;
   font: 500 15px var(--font);
   color: var(--on-surface);
@@ -265,7 +271,7 @@ code {
   user-select: text;
 }
 
-.field input:is([type="text"], [type="password"]):focus {
+.field > input:is([type="text"], [type="password"]):focus {
   border-color: var(--primary);
   background: rgba(255, 255, 255, 0.085);
   box-shadow: 0 0 0 4px rgba(160, 120, 255, 0.15);
@@ -289,7 +295,9 @@ code {
 
 .field input:not(:focus):not(:placeholder-shown) + label { color: var(--on-surface-var); }
 
-.field .lead {
+/* Lead icon of a boxed field; child combobox keeps nested icons (menu search)
+   inline. */
+.field > .lead {
   position: absolute;
   left: 15px; top: 17px;
   width: 20px; height: 20px;
@@ -536,6 +544,7 @@ code {
   position: fixed;
   inset: 0;
   z-index: 40;
+  border-radius: var(--window-radius);
   background: var(--scrim);
   -webkit-backdrop-filter: blur(8px) saturate(120%);
   backdrop-filter: blur(8px) saturate(120%);

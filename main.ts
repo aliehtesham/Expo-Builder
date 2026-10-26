@@ -225,22 +225,23 @@ ipcMain.handle('cancel-install', async () => {
 });
 
 // ─────────────────────────── signing-password vault ─────────────────────────
-// The key/keystore passwords are stored encrypted per project with Chromium's
-// safeStorage (DPAPI on Windows: only the current Windows user can decrypt).
-// Reading them back asks for a Windows Hello consent prompt (fingerprint /
-// PIN / face) via the UserConsentVerifier WinRT API; when Hello is not set up
-// on the machine the entry still decrypts — DPAPI user isolation remains —
-// and the renderer is told so it can say so.
+// The key alias and key/keystore passwords are stored encrypted per project
+// with Chromium's safeStorage (DPAPI on Windows: only the current Windows user
+// can decrypt). Reading them back asks for a Windows Hello consent prompt
+// (fingerprint / PIN / face) via the UserConsentVerifier WinRT API; when Hello
+// is not set up on the machine the entry still decrypts — DPAPI user isolation
+// remains — and the renderer is told so it can say so.
 
 interface VaultEntry {
   v: number;
   ts: number;
+  alias?: string;
   keypass?: string;
   storepass?: string;
 }
 type VaultFile = Record<string, VaultEntry>;
 
-const vaultFields = ['keypass', 'storepass'] as const;
+const vaultFields = ['alias', 'keypass', 'storepass'] as const;
 type VaultFieldName = (typeof vaultFields)[number];
 
 const vaultFile = () => path.join(app.getPath('userData'), 'password-vault.json');
@@ -322,7 +323,7 @@ ipcMain.handle('vault-save', (_e: IpcMainInvokeEvent, projectDir: string, secret
     const val = secrets?.[field];
     if (typeof val === 'string' && val) patch[field] = safeStorage.encryptString(val).toString('base64');
   }
-  if (!patch.keypass && !patch.storepass) return { ok: false, error: 'Nothing to save.' };
+  if (!patch.alias && !patch.keypass && !patch.storepass) return { ok: false, error: 'Nothing to save.' };
   const all = readVault();
   const key = vaultKeyOf(projectDir);
   all[key] = { ...(all[key] || { v: 1, ts: 0 }), ...patch, v: 1, ts: Date.now() };
@@ -332,15 +333,15 @@ ipcMain.handle('vault-save', (_e: IpcMainInvokeEvent, projectDir: string, secret
 
 ipcMain.handle('vault-status', (_e: IpcMainInvokeEvent, projectDir: string) => {
   const entry = readVault()[vaultKeyOf(projectDir)];
-  return { has: !!(entry && (entry.keypass || entry.storepass)) };
+  return { has: !!(entry && (entry.alias || entry.keypass || entry.storepass)) };
 });
 
 ipcMain.handle('vault-load', async (_e: IpcMainInvokeEvent, projectDir: string): Promise<VaultLoadResult> => {
   const entry = readVault()[vaultKeyOf(projectDir)];
-  if (!entry || (!entry.keypass && !entry.storepass)) return { ok: false, reason: 'empty' };
+  if (!entry || (!entry.alias && !entry.keypass && !entry.storepass)) return { ok: false, reason: 'empty' };
   if (!safeStorage.isEncryptionAvailable()) return { ok: false, reason: 'no-encryption' };
 
-  const auth = await verifyWindowsHello('Expo Builder — unlock the saved signing passwords');
+  const auth = await verifyWindowsHello('Expo Builder — unlock the saved signing credentials');
   if (auth === 'denied') return { ok: false, reason: 'denied' };
 
   const secrets: VaultSecrets = {};
@@ -553,7 +554,12 @@ function createWindow(): void {
     resizable: false,
     maximizable: false,
     fullscreenable: false,
-    backgroundColor: '#0a0d17',
+    // Transparent OS surface: the page paints its own rounded window shape
+    // (--window-radius in the stylesheets), so Windows' own corner rounding
+    // stays off and the frame background must be fully transparent.
+    transparent: true,
+    roundedCorners: false,
+    backgroundColor: '#00000000',
     title: 'Expo Builder',
     // Branded window/taskbar icon instead of the stock Electron logo.
     icon: path.join(RES_DIR, process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
@@ -566,6 +572,9 @@ function createWindow(): void {
     },
   });
   win.removeMenu();
+  // With a transparent surface an unpainted window is invisible — show only
+  // once the first (rounded) frame exists.
+  win.once('ready-to-show', () => { if (win && !win.isDestroyed()) win.show(); });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), IS_SMOKE ? { query: { demo: '1' } } : {});
 
   if (IS_SMOKE) runSmoke(win);

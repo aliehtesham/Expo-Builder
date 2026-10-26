@@ -159,6 +159,21 @@ app.whenReady().then(async () => {
       JSON.stringify({ bottom: open.bottom, top: open.top, vh: open.vh, classes: open.classes, btnTop: open.btnTop, menuH: open.menuH }));
     check('country search filters to United States', open.items >= 1);
     check('country search input usable width', open.searchW > 120, String(open.searchW));
+    // Clipping regression: .sign-fields' overflow:hidden used to cut the menu
+    // off at the box borders. While the menu is open it must paint outside the
+    // box — probe its bottom edge and it must answer, not the content beneath.
+    const clip = await js(`(() => {
+      const menu = document.querySelector('#country-menu');
+      const b = menu.getBoundingClientRect();
+      const probe = document.elementFromPoint(Math.round(b.left + b.width / 2), Math.round(b.bottom) - 6);
+      return {
+        overflow: getComputedStyle(document.querySelector('#sign-fields')).overflow,
+        hitMenu: !!probe && (probe === menu || menu.contains(probe)),
+        menuBottom: Math.round(b.bottom),
+        signBottom: Math.round(document.querySelector('#sign-fields').getBoundingClientRect().bottom),
+      };
+    })()`);
+    check('country menu not clipped by sign-fields', clip.overflow === 'visible' && clip.hitMenu, JSON.stringify(clip));
     await shot('inputs-2-country-open.png');
     const picked = await js(`(() => {
       const item = [...document.querySelectorAll('.combo-item')].find((e) => e.textContent.includes('United States'));

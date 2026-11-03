@@ -7,6 +7,10 @@ const builder: BuilderApi = {
   checkEnvironment: () => ipcRenderer.invoke('check-environment'),
   checkUpdates: (force = false) => ipcRenderer.invoke('check-updates', force),
   installUpdate: (id, version) => ipcRenderer.invoke('install-update', id, version),
+  sdkDefaultDir: () => ipcRenderer.invoke('sdk-default-dir'),
+  getDownloadSource: () => ipcRenderer.invoke('get-download-source'),
+  setDownloadSource: (id, customBase) => ipcRenderer.invoke('set-download-source', id, customBase),
+  installSdkRoot: (dir) => ipcRenderer.invoke('install-sdk-root', dir),
   cancelInstall: () => ipcRenderer.invoke('cancel-install'),
   startBuild: (cfg) => ipcRenderer.invoke('start-build', cfg),
   cancelBuild: () => ipcRenderer.invoke('cancel-build'),
@@ -24,6 +28,12 @@ const builder: BuilderApi = {
   secretStatus: (projectDir) => ipcRenderer.invoke('vault-status', projectDir),
   forgetSecrets: (projectDir) => ipcRenderer.invoke('vault-forget', projectDir),
   cancelVaultAuth: () => ipcRenderer.invoke('vault-cancel-hello'),
+  googleConfig: () => ipcRenderer.invoke('google-config'),
+  googleConnect: (clientId, clientSecret) => ipcRenderer.invoke('google-connect', clientId, clientSecret),
+  googleStatus: () => ipcRenderer.invoke('google-status'),
+  googleDisconnect: () => ipcRenderer.invoke('google-disconnect'),
+  googleRegister: (req) => ipcRenderer.invoke('google-register', req),
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
   onVaultAuthEvent: (cb) => {
     const listener = (_e: IpcRendererEvent, phase: 'prompt') => cb(phase);
     ipcRenderer.on('vault-auth', listener);
@@ -38,6 +48,11 @@ const builder: BuilderApi = {
     const listener = (_e: IpcRendererEvent, evt: UpdateEvent) => cb(evt);
     ipcRenderer.on('update-event', listener);
     return () => ipcRenderer.removeListener('update-event', listener);
+  },
+  onGoogleEvent: (cb) => {
+    const listener = (_e: IpcRendererEvent, evt: GoogleEvent) => cb(evt);
+    ipcRenderer.on('google-event', listener);
+    return () => ipcRenderer.removeListener('google-event', listener);
   },
 };
 

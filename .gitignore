@@ -13,3 +13,6 @@ tools/*.js
 
 # Runtime logs
 *.log
+
+# Baked Google OAuth client override (dev only — the shipped ID lives in main.ts)
+resources/google-oauth.json

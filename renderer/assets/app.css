@@ -1015,6 +1015,13 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 .ver-chip:hover { background: rgba(146, 122, 255, 0.26); transform: translateY(-1px); }
 .ver-chip:active { transform: translateY(0); }
 .ver-chip .icon { width: 12px; height: 12px; fill: currentColor; }
+/* Fresh-install chips (tool missing entirely) read green instead of purple. */
+.ver-chip.get {
+  border-color: rgba(157, 219, 164, 0.42);
+  background: rgba(157, 219, 164, 0.12);
+  color: #b9e9c1;
+}
+.ver-chip.get:hover { background: rgba(157, 219, 164, 0.24); }
 
 .env-updates {
   display: flex;
@@ -1041,6 +1048,73 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 .env-updates.all-ok .env-updates-dot { background: var(--success); }
 @keyframes env-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 
+/* Download-source selector (Google by default, mirrors for blocked networks) */
+.env-source {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 7px 12px;
+  border: 1px solid var(--glass-stroke-soft);
+  border-radius: var(--shape-m);
+  background: rgba(255, 255, 255, 0.03);
+}
+.env-source-label {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--on-surface-var);
+}
+.env-source-selectwrap { position: relative; flex: none; max-width: 330px; }
+.env-source select {
+  width: 100%;
+  font: 500 12.5px var(--font);
+  color: var(--on-surface);
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-stroke);
+  border-radius: var(--shape-s);
+  padding: 6px 30px 6px 10px;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  transition: border-color var(--dur-1) var(--std), background-color var(--dur-1) var(--std);
+}
+.env-source select:hover { background-color: rgba(255, 255, 255, 0.09); }
+.env-source select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(160, 120, 255, 0.15);
+}
+.env-source select option { background: #1c2030; color: var(--on-surface); }
+.env-source-caret {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+  color: var(--on-surface-var);
+  pointer-events: none;
+}
+/* Base-URL input for the "Custom source" option */
+.env-source-custom {
+  flex: 1 1 180px;
+  min-width: 140px;
+  font: 500 12px var(--font-mono);
+  color: var(--on-surface);
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-stroke);
+  border-radius: var(--shape-s);
+  padding: 6px 10px;
+  outline: none;
+  transition: border-color var(--dur-1) var(--std);
+}
+.env-source-custom::placeholder { color: var(--on-surface-var); opacity: 0.7; }
+.env-source-custom:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(160, 120, 255, 0.15);
+}
+.env-source-note { font-size: 11.5px; color: var(--on-surface-var); min-width: 0; }
+
 .ver-row {
   display: flex;
   justify-content: space-between;
@@ -1053,6 +1127,21 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 .ver-row:last-child { border-bottom: none; }
 .ver-row .k { color: var(--on-surface-var); }
 .ver-row .v { font-weight: 600; text-align: right; word-break: break-all; }
+
+/* Target-folder row of the fresh-SDK bootstrap dialog */
+.ver-dir {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 2px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--glass-stroke-soft);
+  font-size: 12.5px;
+}
+.ver-dir .k { flex: none; color: var(--on-surface-var); }
+.ver-dir .v { flex: 1; min-width: 0; word-break: break-all; font-size: 11.5px; font-weight: 600; }
 
 .dlg-cmd {
   margin: 10px 0 0;
@@ -1087,6 +1176,18 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
   margin-bottom: 7px;
 }
 .ver-progress-head .mono { font-size: 11.5px; color: var(--on-surface-var); }
+.ver-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ver-progress-row .ver-bar { flex: 1; }
+/* Cancel = compact cross beside the bar, danger on hover */
+.ver-cancel { flex: none; color: var(--on-surface-var); }
+.ver-cancel:hover {
+  background: rgba(255, 180, 171, 0.14);
+  color: var(--error);
+}
 .ver-bar {
   height: 7px;
   border-radius: 99px;

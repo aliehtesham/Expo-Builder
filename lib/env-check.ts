@@ -194,10 +194,15 @@ function checkJava(): CheckResult {
 }
 
 // --------------------------------------------------------------- android sdk
-function findAndroidSdk(): string | null {
+/**
+ * `extra` is a SDK folder the app itself installed into (saved in userData);
+ * it wins over the LOCALAPPDATA default but env vars stay authoritative.
+ */
+function findAndroidSdk(extra?: string | null): string | null {
   const candidates = [
     process.env.ANDROID_HOME,
     process.env.ANDROID_SDK_ROOT,
+    extra,
     process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Android', 'Sdk') : null,
     'C:\\Android\\Sdk',
   ].filter((c): c is string => !!c);
@@ -348,9 +353,9 @@ function checkCmake(sdk: string | null): CheckResult {
 }
 
 // ----------------------------------------------------------------------- main
-function checkEnvironment({ bashPath }: { bashPath?: string } = {}): EnvCheckResult {
+function checkEnvironment({ bashPath, sdkPath }: { bashPath?: string; sdkPath?: string | null } = {}): EnvCheckResult {
   const bash = bashPath || resolveBash();
-  const sdk = findAndroidSdk();
+  const sdk = findAndroidSdk(sdkPath);
 
   const checks: CheckResult[] = [
     checkNode(),
@@ -404,6 +409,7 @@ export {
   findAndroidSdk,
   checkNode,
   checkJava,
+  checkBash,
   checkPlatformTools,
   checkBuildTools,
   checkPlatforms,

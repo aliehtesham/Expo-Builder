@@ -72,8 +72,19 @@
           <span class="env-updates-dot"></span>
           <span id="env-updates-status">Checking for newer versions…</span>
         </div>
+        <div class="env-source" id="env-source">
+          <label class="env-source-label" for="sel-download-source">Download source</label>
+          <div class="env-source-selectwrap">
+            <select id="sel-download-source" aria-label="Download source for the Android SDK repository"></select>
+            <svg viewBox="0 0 24 24" class="icon env-source-caret" aria-hidden="true"><path d="M7 10l5 5 5-5z"/></svg>
+          </div>
+          <input type="text" class="env-source-custom mono hidden" id="env-source-custom" spellcheck="false" autocomplete="off"
+                 placeholder="https://your-mirror.example/android/repository/" />
+          <button type="button" class="btn tonal sm hidden" id="btn-source-apply">Apply</button>
+          <span class="env-source-note" id="env-source-note"></span>
+        </div>
         <div id="env-list"></div>
-        <p class="note" id="env-note">Checked on every launch: PATH, <code>JAVA_HOME</code>, <code>ANDROID_HOME</code> and the default SDK location. Newer-version detection reads Google's Android SDK repository, nodejs.org and adoptium.net — stable releases only. SDK updates install side-by-side via <code>sdkmanager</code>; Node/JDK open their official installers. Installed something just now? Use the re-check button.</p>
+        <p class="note" id="env-note">Checked on every launch: PATH, <code>JAVA_HOME</code>, <code>ANDROID_HOME</code> and the default SDK location. Newer-version detection reads the Android SDK repository (download source selectable above), nodejs.org, adoptium.net and github.com — stable releases only. Missing tools install right from this page too: SDK components download from the selected repository source, Node/JDK/Git open their official installers. Installed something just now? Use the re-check button.</p>
       </div>
 
       <div class="summary-bar glass">
@@ -298,6 +309,47 @@
           </div>
         </div>
 
+        <div class="card glass form-card" id="google-card">
+          <div class="projects-head">
+            <h3 class="section-title">Google Play Console <span class="badge sm dim">optional</span></h3>
+          </div>
+          <div id="google-off">
+            <p class="note">Connect your developer account once and the Output page can upload a signed AAB to Play — the first upload enrolls the app in <b>Play App Signing</b> and registers this project&rsquo;s keystore as its <b>upload key</b>. Prerequisites: an app with the same package name in <a href="#" id="google-help-console">Play Console</a>, and an OAuth client of type <b>Desktop app</b> from the linked Google Cloud project — <a href="#" id="google-help-api">how to create it</a>. Clicking Connect opens the Google sign-in in your browser; the client <b>secret is optional</b> (desktop clients work without one). Credentials are stored encrypted (Windows user-bound) and only after the sign-in succeeds.</p>
+            <div class="grid two">
+              <div class="field" id="wrap-gclient">
+                <input id="field-gclient" type="text" placeholder=" " autocomplete="off" spellcheck="false" />
+                <label for="field-gclient">OAuth client ID</label>
+                <p class="field-err" id="err-gclient"></p>
+              </div>
+              <div class="field has-lead" id="wrap-gsecret">
+                <svg viewBox="0 0 24 24" class="icon lead"><path d="M18 8h-1V6a5 5 0 0 0-10 0v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zm-9-2a3 3 0 0 1 6 0v2H9V6z"/></svg>
+                <input id="field-gsecret" class="has-lead" type="password" placeholder=" " autocomplete="new-password" spellcheck="false" />
+                <label for="field-gsecret">OAuth client secret (optional)</label>
+                <div class="trail-btns">
+                  <button type="button" class="icon-btn" data-toggle-pass="field-gsecret" title="Show / hide" aria-label="Show or hide OAuth client secret">
+                    <svg viewBox="0 0 24 24" class="icon eye-open"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17a5 5 0 1 1 5-5 5 5 0 0 1-5 5zm0-8a3 3 0 1 0 3 3 3 3 0 0 0-3-3z"/></svg>
+                    <svg viewBox="0 0 24 24" class="icon eye-closed"><path d="M12 7a5 5 0 0 1 4.9 4h2.03A7 7 0 0 0 7.53 5.7l1.45 1.46A4.9 4.9 0 0 1 12 7zm0 10a5 5 0 0 1-4.9-4H5.07a7 7 0 0 0 11.4 5.3l-1.45-1.46A4.9 4.9 0 0 1 12 17zm7-13 1.5 1.5L4.5 20.5 3 19 19 4zM2 12c1.73-4.39 6-7.5 11-7.5 1.4 0 2.74.25 3.98.7L15.6 6.6A9.8 9.8 0 0 0 12 6a9.8 9.8 0 0 0-8.82 5.5A9.9 9.9 0 0 0 6.3 14.4l-1.5 1.5A11.8 11.8 0 0 1 2 12zm20 0a11.8 11.8 0 0 1-2.8 3.9l-1.5-1.5a9.9 9.9 0 0 0 3.12-3.4A9.8 9.8 0 0 0 18.4 8.4l1.38-1.38c.17.13.34.26.5.4A11.7 11.7 0 0 1 23 12h-1z"/></svg>
+                  </button>
+                </div>
+                <p class="field-err" id="err-gsecret"></p>
+              </div>
+            </div>
+            <div class="row end">
+              <button type="button" class="btn filled" id="btn-google-connect">
+                <svg viewBox="0 0 24 24" class="icon"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8-8-8z"/></svg>
+                Connect Google account
+              </button>
+            </div>
+          </div>
+          <div id="google-on" class="hidden">
+            <div class="projects-head">
+              <span class="dim">Connected as <b class="mono" id="google-email">—</b></span>
+              <button type="button" class="btn tonal sm" id="btn-google-disconnect">Disconnect</button>
+            </div>
+            <p class="note">Sign-in credentials are saved encrypted for this Windows user; every upload asks for Windows Hello again before they are unlocked. Upload happens from the Output page after an AAB build.</p>
+          </div>
+        </div>
+
         <div class="card glass form-card">
           <button type="button" class="disclosure" id="btn-advanced" aria-expanded="false">
             <svg viewBox="0 0 24 24" class="icon chev"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>
@@ -410,6 +462,37 @@
         </div>
       </div>
 
+      <div class="card glass form-card hidden" id="publish-card">
+        <h3 class="section-title">Register with Google Play</h3>
+        <p class="note" id="publish-note">Uploading this bundle through the Play Developer API enrolls the app in Play App Signing and registers the keystore that signed it as the app&rsquo;s <b>upload key</b>. The app must already exist in Play Console with the same package name, and its first upload must come from this build&rsquo;s keystore.</p>
+        <div class="grid two">
+          <div class="field" id="wrap-pkg">
+            <input id="field-pkg" type="text" placeholder=" " autocomplete="off" spellcheck="false" />
+            <label for="field-pkg">Android package name</label>
+            <p class="field-err" id="err-pkg"></p>
+          </div>
+          <label class="check-row" id="publish-track-row">
+            <span class="checkbox" id="publish-track-checkbox" aria-hidden="true">
+              <svg viewBox="0 0 24 24" class="icon"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            </span>
+            <input type="checkbox" id="field-pubtrack" checked />
+            <span class="check-text"><strong>Add a draft release too</strong><small>Internal testing track — stays unpublished until you finish it in Play Console</small></span>
+          </label>
+        </div>
+        <div class="row end">
+          <button type="button" class="btn filled" id="btn-publish">
+            <svg viewBox="0 0 24 24" class="icon"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13l-3 3-3-3h2V9h2v4h2z"/></svg>
+            Upload bundle &amp; register key
+          </button>
+        </div>
+        <div class="ver-progress hidden" id="publish-progress">
+          <div class="ver-progress-head">
+            <span id="publish-phase">Preparing…</span>
+          </div>
+          <div class="ver-log mono hidden" id="publish-log"></div>
+        </div>
+      </div>
+
       <div class="row center-gap">
         <button class="btn tonal" id="btn-open-project">
           <svg viewBox="0 0 24 24" class="icon"><path d="M20 6h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2zm0 12H4V8h16v10z"/></svg>
@@ -434,7 +517,7 @@
         <svg viewBox="0 0 24 24" class="icon"><path d="M17.81 4.47c-.13 0-.26-.05-.36-.15a9.8 9.8 0 0 0-3.42-2.18.51.51 0 0 1-.32-.64c.08-.27.35-.42.63-.34 1.4.5 2.66 1.3 3.83 2.32.2.19.22.51.04.71-.1.19-.26.28-.42.28zM7.21 4.31c-.14 0-.28-.06-.39-.17-.19-.21-.17-.53.05-.74C7.9 2.4 9.03 1.74 10.25 1.32c.28-.09.55.06.64.33.09.27-.06.55-.33.64-1.09.38-2.11 1-2.99 1.81-.1.14-.24.21-.36.21zm9.94 16.66c-.14 0-.28-.06-.39-.17-.19-.21-.17-.53.05-.74 1.53-1.37 2.46-3.22 2.61-5.21.02-.28.26-.5.55-.47.28.02.49.27.47.55-.17 2.27-1.22 4.37-2.95 5.91-.1.09-.22.13-.34.13zm-10.32.02c-.12 0-.24-.04-.34-.12-1.35-1.14-2.29-2.72-2.64-4.45-.06-.27.12-.55.39-.6.28-.06.55.12.6.39.31 1.5 1.12 2.87 2.28 3.85.21.19.24.5.05.71-.09.14-.21.22-.34.22zM12 17.5c-2.05 0-3.94-.84-5.3-2.36-.19-.21-.17-.53.04-.72.21-.19.53-.17.72.04A5.96 5.96 0 0 0 12 16.25c1.62 0 3.15-.63 4.3-1.78.2-.2.52-.2.72 0s.2.52 0 .72A7.2 7.2 0 0 1 12 17.5zm0-3.25c-1.49 0-2.88-.77-3.69-2.04a.51.51 0 0 1 .16-.7c.24-.15.55-.08.7.16.62 1.02 1.75 1.66 2.83 1.66 1.09 0 2.22-.64 2.84-1.66.15-.24.46-.31.7-.16.24.15.31.46.16.7A4.9 4.9 0 0 1 12 14.25zm-3.5-4.5c-.28 0-.5-.22-.5-.5 0-2.2 1.79-4 4-4s4 1.8 4 4c0 .28-.22.5-.5.5s-.5-.22-.5-.5c0-1.65-1.35-3-3-3s-3 1.35-3 3c0 .28-.22.5-.5.5z"/></svg>
       </div>
       <h2 id="vault-auth-title">Confirm it&rsquo;s you</h2>
-      <p class="dialog-body" id="vault-auth-body">Windows Hello is verifying you so the saved signing credentials can be filled in. Use the <b>Windows Security</b> prompt — fingerprint, face or PIN. The app resumes as soon as you&rsquo;re verified.</p>
+      <p class="dialog-body" id="vault-auth-body">Windows Hello is verifying you so the saved credentials (signing passwords or the connected Google account) can be unlocked. Use the <b>Windows Security</b> prompt — fingerprint, face or PIN. The app resumes as soon as you&rsquo;re verified.</p>
       <div class="row end dialog-actions">
         <button type="button" class="btn text" id="btn-vault-cancel">Cancel</button>
       </div>
@@ -571,6 +654,11 @@
     <h2 id="dlg-version-title">—</h2>
     <p class="dialog-body" id="dlg-version-sub">A newer stable release is available for this dependency.</p>
     <div id="dlg-version-meta"></div>
+    <div class="ver-dir hidden" id="dlg-version-dir">
+      <span class="k">Install into</span>
+      <span class="v mono" id="dlg-version-dir-path">…</span>
+      <button type="button" class="btn tonal sm" id="btn-version-dir">Change…</button>
+    </div>
     <div class="dlg-cmd mono hidden" id="dlg-version-cmd"></div>
     <p class="note" id="dlg-version-hint">—</p>
     <div class="ver-progress hidden" id="dlg-version-progress">
@@ -578,18 +666,20 @@
         <span id="dlg-version-phase">Preparing…</span>
         <span class="mono" id="dlg-version-pct">—</span>
       </div>
-      <div class="ver-bar"><div class="ver-bar-fill" id="dlg-version-bar"></div></div>
-      <div class="ver-log mono hidden" id="dlg-version-log"></div>
-      <div class="row end">
-        <button type="button" class="btn tonal danger sm" id="btn-install-cancel">Cancel</button>
+      <div class="ver-progress-row">
+        <div class="ver-bar"><div class="ver-bar-fill" id="dlg-version-bar"></div></div>
+        <button type="button" class="icon-btn sm ver-cancel" id="btn-install-cancel" title="Cancel the install" aria-label="Cancel the install">
+          <svg viewBox="0 0 24 24" class="icon"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
       </div>
+      <div class="ver-log mono hidden" id="dlg-version-log"></div>
     </div>
     <p class="note dim" id="dlg-version-disclaimer">SDK components install side-by-side through Google's <code>sdkmanager</code>. Node and JDK touch system locations, so their official installer is downloaded and opened — you finish the wizard.</p>
     <div class="row end dialog-actions">
       <button type="button" class="btn text" id="btn-version-close">Close</button>
       <button type="button" class="btn filled" id="btn-install-update">
         <svg viewBox="0 0 24 24" class="icon"><path d="M12 4l-5 5 1.41 1.41L11 7.83V16h2V7.83l2.59 2.58L17 9l-5-5zm-7 14h14v2H5z"/></svg>
-        Update now
+        <span id="btn-install-update-label">Update now</span>
       </button>
     </div>
   </div>

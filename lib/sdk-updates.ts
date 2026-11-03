@@ -16,17 +16,20 @@
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as https from 'https';
+import { httpGet } from './net';
+import { mirrorFallbacks } from './mirrors';
 import {
   findAndroidSdk,
   checkNode,
   checkJava,
+  checkBash,
   checkPlatformTools,
   checkBuildTools,
   checkPlatforms,
   checkNdk,
   checkCmake,
   compareVersionStrings,
+  resolveBash,
 } from './env-check';
 
 const WIN = process.platform === 'win32';
@@ -34,14 +37,16 @@ const WIN = process.platform === 'win32';
 /** The SDK package families shown as upgradeable rows on the deps page. */
 const SDK_FAMILIES = ['platform-tools', 'build-tools', 'platforms', 'ndk', 'cmake'] as const;
 
-const MANIFEST_BASE = 'https://dl.google.com/android/repository/';
 /** Newest schema first; older manifests keep working for older toolchains. */
 const MANIFEST_VERSIONS = [3, 2, 1];
 const NODE_INDEX_URL = 'https://nodejs.org/dist/index.json';
 const ADOPTIUM_21_URL =
   'https://api.adoptium.net/v3/assets/latest/21/hotspot?architecture=x64&image_type=jdk';
+const GIT_RELEASES_URL = 'https://api.github.com/repos/git-for-windows/git/releases/latest';
 
-const FETCH_TIMEOUT = 15000;
+// Generous enough to cover a filtered network where the first attempt times
+// out and the fallback stack has to start over.
+const FETCH_TIMEOUT = 30000;
 const SDKMANAGER_TIMEOUT = 90000;
 const PREVIEW_RE = /-(rc|beta|alpha|canary|preview|dev)\d*$/i;
 /** "android-37.2" ok; "android-34-ext10"/"android-CANARY" are side channels. */
@@ -72,10 +77,10 @@ function fetchText(url: string, timeoutMs = FETCH_TIMEOUT): Promise<string> {
       let tim: ReturnType<typeof setTimeout> | undefined;
       tim = setTimeout(() => done(new Error(`timeout: ${u}`)), timeoutMs);
       try {
-        const req = https.get(u, { headers: { 'User-Agent': 'expo-builder' } }, (res) => {
+        const req = httpGet(u, { 'User-Agent': 'expo-builder' }, (res) => {
           if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             res.resume();
-            get(new URL(res.headers.location, u).toString(), hops + 1);
+            get(new URL(String(res.headers.location), u).toString(), hops + 1);
             return;
           }
           if (res.statusCode !== 200) {
@@ -111,6 +116,61 @@ async function fetchJson(url: string, timeoutMs = FETCH_TIMEOUT): Promise<unknow
 }
 
 // -------------------------------------------------------- manifest / sdkmanager
+/** One <remotePackage> block of the repository manifest. */
+interface ManifestPkg {
+  path: string;
+  body: string;
+}
+
+/** Split the raw manifest XML into its remotePackage blocks. */
+function manifestPackages(xml: string): ManifestPkg[] {
+  const out: ManifestPkg[] = [];
+  const re = /<remotePackage path="([^"]+)"[^>]*>([\s\S]*?)<\/remotePackage>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml))) out.push({ path: m[1], body: m[2] });
+  return out;
+}
+
+/** A downloaded manifest plus the base its archive URLs resolve against. */
+export interface ManifestSource {
+  xml: string;
+  base: string;
+  host: string;
+}
+
+/**
+ * Download the Android SDK repository manifest: the selected download source
+ * first (all schemas), then the official Google one (newest schema only) as a
+ * last resort. The base that actually served the manifest is returned too —
+ * the package zips it names must resolve against the same mirror.
+ */
+async function fetchManifestFrom(): Promise<ManifestSource> {
+  const fallbacks = mirrorFallbacks();
+  let lastErr: unknown = null;
+  for (let i = 0; i < fallbacks.length; i++) {
+    const m = fallbacks[i];
+    const versions = i === 0 ? MANIFEST_VERSIONS : [MANIFEST_VERSIONS[0]];
+    for (const v of versions) {
+      try {
+        const xml = await fetchText(`${m.base}repository2-${v}.xml`);
+        if (xml.includes('<remotePackage')) return { xml, base: m.base, host: m.host };
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+  }
+  throw new Error(
+    `The Android SDK repository is unreachable (offline, blocked, or moved)` +
+      `${lastErr ? `: ${lastErr instanceof Error ? lastErr.message : lastErr}` : ''}` +
+      ` — tried ${fallbacks.map((m) => m.host).join(', then ')}. If your network blocks it, switch the download source on the Dependencies page or turn your VPN/system proxy on and try again (the app follows the system proxy)`
+  );
+}
+
+/** Download the Android SDK repository manifest (selected source first). */
+async function fetchManifest(): Promise<string> {
+  return (await fetchManifestFrom()).xml;
+}
+
 /**
  * Parse dl.google.com's repository2-*.xml. Previews are marked by an -rc/-beta
  * style suffix or a <preview> revision element; channelRef is always
@@ -118,11 +178,7 @@ async function fetchJson(url: string, timeoutMs = FETCH_TIMEOUT): Promise<unknow
  */
 function parseManifest(xml: string): SdkPkg[] {
   const out: SdkPkg[] = [];
-  const re = /<remotePackage path="([^"]+)"[^>]*>([\s\S]*?)<\/remotePackage>/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(xml))) {
-    const p = m[1];
-    const body = m[2];
+  for (const { path: p, body } of manifestPackages(xml)) {
     const semi = p.indexOf(';');
     const family = semi === -1 ? p : p.slice(0, semi);
     if (!(SDK_FAMILIES as readonly string[]).includes(family)) continue;
@@ -249,7 +305,7 @@ function latestOf(pkgs: SdkPkg[], family: string): { stable: string | null; prev
 }
 
 // ------------------------------------------------------------------ latest feeds
-async function latestNodeLts(): Promise<string | null> {
+export async function latestNodeLts(): Promise<string | null> {
   try {
     const idx = (await fetchJson(NODE_INDEX_URL)) as Array<{ version?: string; lts?: unknown }>;
     const lts = Array.isArray(idx) ? idx.find((e) => e && e.lts && typeof e.version === 'string') : null;
@@ -271,10 +327,32 @@ async function latestJdk21(): Promise<string | null> {
   }
 }
 
+/**
+ * Newest Git for Windows release (the installer that provides bash), from the
+ * GitHub releases API. The bash probe reports the shell's own version ("5.2.x")
+ * while releases are "2.5x" — two different schemes, so an installed bash is
+ * never reported as upgradeable; this row only matters for fresh installs.
+ */
+async function latestGitRelease(): Promise<{ version: string; url: string } | null> {
+  try {
+    const rel = (await fetchJson(GIT_RELEASES_URL)) as {
+      assets?: Array<{ name?: string; browser_download_url?: string }>;
+    };
+    for (const a of Array.isArray(rel?.assets) ? rel.assets : []) {
+      const m = /^Git-(\d+(?:\.\d+)*)-64-bit\.exe$/.exec(String(a?.name || ''));
+      if (m && a.browser_download_url) return { version: m[1], url: a.browser_download_url };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ------------------------------------------------------------------------ main
 const DEP_LABELS: Record<string, string> = {
   node: 'Node.js',
   jdk: 'Java JDK (17+)',
+  bash: 'Git Bash',
   'platform-tools': 'SDK platform-tools',
   'build-tools': 'SDK build-tools',
   platforms: 'Android platform',
@@ -306,12 +384,13 @@ async function resolveSdkLatest(sdk: string | null, opts: { manifestXml?: string
       return { pkgs: [], source: '', error: String(e) };
     }
   }
-  for (const v of MANIFEST_VERSIONS) {
-    try {
-      const pkgs = parseManifest(await fetchText(`${MANIFEST_BASE}repository2-${v}.xml`));
-      if (pkgs.length) return { pkgs, source: `dl.google.com · repository2-${v}.xml`, error: null };
-    } catch {
-      /* try the next manifest version */
+  try {
+    const m = await fetchManifestFrom();
+    const pkgs = parseManifest(m.xml);
+    if (pkgs.length) return { pkgs, source: `${m.host} · repository manifest`, error: null };
+  } catch (e) {
+    if (!sdk) {
+      return { pkgs: [], source: '', error: e instanceof Error ? e.message : String(e) };
     }
   }
   if (sdk) {
@@ -324,14 +403,15 @@ async function resolveSdkLatest(sdk: string | null, opts: { manifestXml?: string
   return { pkgs: [], source: '', error: 'Android SDK repository unreachable (offline or blocked)' };
 }
 
-async function checkDependencyUpdates(opts: { manifestXml?: string } = {}): Promise<UpdatesResult> {
-  const sdk = findAndroidSdk();
+async function checkDependencyUpdates(opts: { manifestXml?: string; sdkPath?: string | null } = {}): Promise<UpdatesResult> {
+  const sdk = findAndroidSdk(opts.sdkPath);
   const deps: DepUpdateInfo[] = [];
 
   // Current versions come from the same probes the environment gate uses.
   const cur: Record<string, string | null> = {
     node: checkNode().version || null,
     jdk: checkJava().version || null,
+    bash: checkBash(resolveBash()).version || null,
     'platform-tools': checkPlatformTools(sdk).version || null,
     'build-tools': checkBuildTools(sdk).version || null,
     platforms: checkPlatforms(sdk).version || null,
@@ -339,12 +419,13 @@ async function checkDependencyUpdates(opts: { manifestXml?: string } = {}): Prom
     cmake: checkCmake(sdk).version || null,
   };
 
-  // The three source groups are independent — fetch them concurrently so a
-  // blocked network costs one timeout, not the sum of all of them.
-  const [sdkLatest, nodeLts, jdk21] = await Promise.all([
+  // The source groups are independent — fetch them concurrently so a blocked
+  // network costs one timeout, not the sum of all of them.
+  const [sdkLatest, nodeLts, jdk21, git] = await Promise.all([
     resolveSdkLatest(sdk, opts),
     latestNodeLts(),
     latestJdk21(),
+    latestGitRelease(),
   ]);
 
   for (const family of SDK_FAMILIES) {
@@ -366,17 +447,27 @@ async function checkDependencyUpdates(opts: { manifestXml?: string } = {}): Prom
     dep('jdk', cur.jdk, jdk21, null, jdk21 ? 'adoptium.net · Temurin 21 LTS' : '', jdk21 ? null : 'adoptium.net unreachable')
   );
 
+  // ---- Git Bash: only a fresh-install target (see latestGitRelease for why).
+  deps.push(
+    dep('bash', cur.bash, git ? git.version : null, null, git ? 'github.com · git-for-windows' : '', git ? null : 'github.com unreachable')
+  );
+
   return { when: Date.now(), deps };
 }
 
-export { checkDependencyUpdates, parseManifest, parseSdkmanagerList, findSdkmanager };
+export { checkDependencyUpdates, parseManifest, parseSdkmanagerList, findSdkmanager, fetchManifest, fetchManifestFrom, manifestPackages, latestGitRelease };
 
 if (require.main?.filename === __filename) {
   // CLI: node out/lib/sdk-updates.js [--xml repository2-3.xml]
   const i = process.argv.indexOf('--xml');
   const manifestXml = i >= 0 ? process.argv[i + 1] : undefined;
   checkDependencyUpdates(manifestXml ? { manifestXml } : {})
-    .then((r) => console.log(JSON.stringify(r, null, 2)))
+    .then((r) => {
+      console.log(JSON.stringify(r, null, 2));
+      // A timed-out sdkmanager probe can leave its java grandchild holding the
+      // event loop — exit explicitly once the report is out.
+      process.exit(0);
+    })
     .catch((e) => {
       console.error(String(e));
       process.exit(1);

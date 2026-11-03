@@ -49,6 +49,10 @@
     buildStart: number;
     logLines: string[];
     stick: boolean;
+    /** Google Play Console account connection ( refreshed from the vault). */
+    googleConnected: boolean;
+    googleEmail: string | null;
+    publishRunning: boolean;
   }
 
   const state: AppState = {
@@ -76,6 +80,9 @@
     buildStart: 0,
     logLines: [],
     stick: true,
+    googleConnected: false,
+    googleEmail: null,
+    publishRunning: false,
   };
 
   // ─────────────────────────────── utilities ───────────────────────────────
@@ -481,6 +488,9 @@
   // ───────────────────────── page 0 · environment ──────────────────────────
   const isDemo = () => new URLSearchParams(location.search).has('demo');
 
+  /** Required tools that can be downloaded & installed from inside the app. */
+  const INSTALLABLE_IDS = new Set(['sdk', 'platform-tools', 'build-tools', 'platforms', 'ndk', 'cmake', 'node', 'jdk', 'bash']);
+
   const ENV_ICONS: Record<string, string> = {
     ok: '<svg viewBox="0 0 24 24" class="icon"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>',
     missing:
@@ -647,16 +657,18 @@
     version.className = `env-version mono ${cls}`;
     version.textContent = envState.checking ? '…' : c.status === 'ok' ? c.version || 'installed' : c.status === 'warn' ? c.version || 'check' : 'not found';
 
-    // Newest-release chip: only for detected (ok/warn) rows whose latest stable
-    // release is newer than what is installed. Missing rows already carry a
-    // fix hint — a version chip there would be noise.
+    // Newest-release chip: for detected (ok/warn) rows whose latest stable
+    // release is newer than what is installed. Missing required rows get a
+    // fresh-install chip instead — every required tool is installable from
+    // here, with the version resolved when the install starts if the version
+    // check could not reach its source.
     const verBlock = document.createElement('div');
     verBlock.className = 'env-version-block';
     verBlock.append(version);
-    const upd = envState.updates && !envState.checking && c.status !== 'missing'
+    const upd = envState.updates && !envState.checking
       ? envState.updates.deps.find((d) => d.id === c.id)
       : undefined;
-    if (upd && upd.newer) {
+    if (upd && upd.newer && c.status !== 'missing') {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'ver-chip';
@@ -665,6 +677,24 @@
         '<svg viewBox="0 0 24 24" class="icon"><path d="M12 4l-5 5 1.41 1.41L11 7.83V16h2V7.83l2.59 2.58L17 9zm-7 14h14v2H5z"/></svg>' +
         `<span>${upd.latest}</span>`;
       chip.addEventListener('click', () => openVersionDialog(upd));
+      verBlock.append(chip);
+    } else if (c.status === 'missing' && c.required && !!c.id && INSTALLABLE_IDS.has(c.id)) {
+      // Fresh-install target: nothing on disk. current=null so the dialog
+      // opens in install flavor even when demo update data has one.
+      const id = c.id;
+      const target: DepUpdateInfo = id === 'sdk'
+        ? { id: 'sdk', label: c.label, current: null, latest: null, preview: null, newer: false, source: '', error: null }
+        : upd
+          ? { ...upd, current: null, newer: false }
+          : { id, label: c.label, current: null, latest: null, preview: null, newer: false, source: '', error: null };
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'ver-chip get';
+      chip.title = 'Not installed — click to download and install it';
+      chip.innerHTML =
+        '<svg viewBox="0 0 24 24" class="icon"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>' +
+        `<span>${target.latest ? `Install ${target.latest}` : 'Install'}</span>`;
+      chip.addEventListener('click', () => openVersionDialog(target));
       verBlock.append(chip);
     }
 
@@ -763,7 +793,11 @@
     cmake: 'sdk',
     node: 'Download the LTS installer from nodejs.org, run it, and reopen Expo Builder.',
     jdk: 'Install Temurin JDK 21 LTS from adoptium.net and point JAVA_HOME at it (Android Studio\'s bundled JDK is detected automatically too).',
+    bash: 'Download the Git for Windows installer from git-scm.com, run it, and reopen Expo Builder.',
   };
+
+  /** What a fresh Android SDK bootstrap puts on disk. */
+  const SDK_INSTALLS = 'command-line tools + platform-tools, build-tools, platform, CMake, NDK — latest stable of each';
 
   function sdkPkgOf(upd: DepUpdateInfo): string {
     // platform-tools has no version in its package path; platforms uses the
@@ -771,15 +805,126 @@
     return upd.id === 'platform-tools' ? 'platform-tools' : `${upd.id};${upd.latest}`;
   }
 
+  /** Where a fresh SDK lands; loaded once, changeable from the dialog. */
+  let sdkDir: { dir: string | null; loaded: boolean } = { dir: null, loaded: false };
+
+  // ───────────────────── download source (mirror selector) ─────────────────
+  // Where SDK/NDK downloads come from: Google by default, full mirrors for
+  // networks where Google is blocked. Persisted app-wide in the main process;
+  // switching it re-runs the version check so the chips reflect the source.
+  let downloadSource: DownloadSourceInfo | null = null;
+
+  /** Host of the active source ("dl.google.com", "mirrors.cloud.tencent.com"). */
+  function activeSourceHost(): string {
+    const cur = downloadSource?.providers.find((p) => p.id === downloadSource?.current);
+    return cur?.host || 'dl.google.com';
+  }
+
+  async function initDownloadSource(): Promise<void> {
+    const sel = $<HTMLSelectElement>('#sel-download-source');
+    const row = $('#env-source');
+    if (!sel || !row) return;
+    try {
+      downloadSource = await window.builder.getDownloadSource();
+    } catch {
+      downloadSource = null;
+    }
+    if (!downloadSource || !downloadSource.providers.length) {
+      row.classList.add('hidden');
+      return;
+    }
+    sel.innerHTML = '';
+    for (const p of downloadSource.providers) {
+      const o = document.createElement('option');
+      o.value = p.id;
+      o.textContent = `${p.label} — ${p.region}`;
+      sel.append(o);
+    }
+    sel.value = downloadSource.current;
+    const note = $('#env-source-note');
+    const customRow = $<HTMLInputElement>('#env-source-custom');
+    const applyBtn = $<HTMLButtonElement>('#btn-source-apply');
+    const syncNote = () => {
+      const cur = downloadSource?.providers.find((p) => p.id === sel.value);
+      if (note && cur) note.textContent = cur.note;
+    };
+    // "Custom source" needs a base URL first: reveal the input row and only
+    // switch when Apply is clicked (the select itself carries no source yet).
+    const syncEditor = () => {
+      const custom = sel.value === 'custom';
+      customRow?.classList.toggle('hidden', !custom);
+      applyBtn?.classList.toggle('hidden', !custom);
+      if (custom && customRow && !customRow.value) customRow.value = downloadSource?.customBase || '';
+    };
+    const recheck = () => {
+      envState.updatesBusy = true;
+      renderEnvChecks();
+      void loadUpdates(true);
+    };
+    syncNote();
+    syncEditor();
+    sel.addEventListener('change', async () => {
+      if (!downloadSource) return;
+      syncNote();
+      syncEditor();
+      if (sel.value === 'custom') return;
+      const res = await window.builder.setDownloadSource(sel.value);
+      if (!res.ok || !res.current) {
+        sel.value = downloadSource.current;
+        snack(res.error || 'Could not switch the download source.');
+        return;
+      }
+      downloadSource.current = res.current;
+      snack('Download source switched — re-checking versions…');
+      recheck();
+    });
+    applyBtn?.addEventListener('click', async () => {
+      if (!downloadSource || !customRow) return;
+      const base = customRow.value.trim();
+      const res = await window.builder.setDownloadSource('custom', base);
+      if (!res.ok || !res.current) {
+        snack(res.error || 'Invalid base URL.');
+        return;
+      }
+      downloadSource.current = res.current;
+      downloadSource.customBase = base || null;
+      snack('Custom download source applied — re-checking versions…');
+      recheck();
+    });
+    customRow?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') applyBtn?.click();
+    });
+  }
+
+  async function ensureSdkDir(): Promise<void> {
+    if (sdkDir.loaded) return;
+    sdkDir.loaded = true;
+    try {
+      const info = await window.builder.sdkDefaultDir();
+      sdkDir.dir = info.saved || info.default;
+    } catch {
+      sdkDir.dir = null;
+    }
+    if ($('#dlg-version-dir-path')) $('#dlg-version-dir-path').textContent = sdkDir.dir || '—';
+  }
+
   function openVersionDialog(upd: DepUpdateInfo): void {
     dialogUpd = upd;
-    const isSdk = UPGRADE_HINTS[upd.id] === 'sdk';
+    const isSdkRoot = upd.id === 'sdk';
+    const isSdk = !isSdkRoot && UPGRADE_HINTS[upd.id] === 'sdk';
+    const missing = !isSdkRoot && !upd.current;
     $('#dlg-version-title').textContent = upd.label;
-    $('#dlg-version-sub').textContent = upd.newer
-      ? isSdk
-        ? 'A newer stable release is available — your installed version keeps working, and SDK components install side-by-side.'
-        : 'A newer stable release is available — the official installer will be downloaded and opened for you.'
-      : 'Release information for this dependency.';
+    $('#dlg-version-sub').textContent = isSdkRoot
+      ? 'No Android SDK was found — Expo Builder can create one: Google\'s command-line tools and every required component are downloaded and extracted into the folder below.'
+      : missing
+        ? isSdk
+          ? 'Not installed yet — the newest stable release can be downloaded and installed right here.'
+          : 'Not installed — the official installer can be downloaded and opened for you.'
+        : upd.newer
+          ? isSdk
+            ? 'A newer stable release is available — your installed version keeps working, and SDK components install side-by-side.'
+            : 'A newer stable release is available — the official installer will be downloaded and opened for you.'
+          : 'Release information for this dependency.';
 
     const meta = $('#dlg-version-meta');
     meta.innerHTML = '';
@@ -795,25 +940,54 @@
       r.append(key, val);
       meta.append(r);
     };
-    row('Installed', upd.current || 'not detected');
-    row('Latest stable', upd.latest || 'unknown');
-    if (upd.preview) row('Preview channel', `${upd.preview} — not recommended for release builds`);
-    row('Checked against', upd.source || upd.error || '—');
+    if (isSdkRoot) {
+      row('Will install', SDK_INSTALLS);
+    } else {
+      row('Installed', upd.current || 'not detected');
+      row('Latest stable', upd.latest || 'resolved when the install starts');
+      if (upd.preview) row('Preview channel', `${upd.preview} — not recommended for release builds`);
+      if (upd.source || upd.error) row('Checked against', upd.source || upd.error || '—');
+    }
 
+    // sdkmanager command: upgrade flavor only — fresh installs pull the zip
+    // straight from the repository and need no sdkmanager at all.
     const cmd = $('#dlg-version-cmd');
-    cmd.classList.toggle('hidden', !isSdk || !upd.latest);
-    if (isSdk && upd.latest) cmd.textContent = `sdkmanager "${sdkPkgOf(upd)}"`;
+    cmd.classList.toggle('hidden', missing || !isSdk || !upd.latest);
+    if (!missing && isSdk && upd.latest) cmd.textContent = `sdkmanager "${sdkPkgOf(upd)}"`;
 
-    $('#dlg-version-hint').textContent = isSdk
-      ? 'Install it from Android Studio → SDK Manager (SDK Tools / SDK Platforms), or right here: Update now runs the same sdkmanager install with progress and cancel.'
-      : UPGRADE_HINTS[upd.id] || '';
-    $('#dlg-version-disclaimer').innerHTML = isSdk
-      ? 'SDK components install side-by-side through Google\'s <code>sdkmanager</code> — your current version stays usable the whole time.'
-      : 'The official installer is downloaded into your Downloads folder and opened — nothing is installed silently.';
+    const hint = $('#dlg-version-hint');
+    if (isSdkRoot) {
+      hint.textContent =
+        `The folder is created if it does not exist. Everything comes straight from ${activeSourceHost()} and is verified against published SHA-1 checksums — no sdkmanager or JDK is needed for the download.`;
+    } else if (missing && isSdk) {
+      hint.textContent =
+        'A fresh install needs no sdkmanager and no JDK — this works even before the JDK row above is resolved.';
+    } else {
+      hint.textContent = isSdk
+        ? 'Install it from Android Studio → SDK Manager (SDK Tools / SDK Platforms), or right here: Update now runs the same sdkmanager install with progress and cancel.'
+        : UPGRADE_HINTS[upd.id] || '';
+    }
+    $('#dlg-version-disclaimer').innerHTML = isSdkRoot
+      ? 'Components land in the folder below and are remembered — the environment check finds them on the next re-check. Nothing is installed silently and nothing outside the folder is touched.'
+      : missing && isSdk
+        ? 'The package is downloaded into your SDK folder and extracted — nothing outside it is touched, nothing is installed silently.'
+        : isSdk
+          ? downloadSource && downloadSource.current !== 'google'
+            ? 'The package is downloaded from the selected download source and extracted side-by-side — your current version stays usable the whole time.'
+            : 'SDK components install side-by-side through Google\'s <code>sdkmanager</code> — your current version stays usable the whole time.'
+          : 'The official installer is downloaded into your Downloads folder and opened — nothing is installed silently.';
 
     // Fresh dialog: info mode.
     $('#dlg-version-progress').classList.add('hidden');
-    $('#btn-install-update').classList.toggle('hidden', !upd.newer || !upd.latest);
+    // Visible for updates (newer) and fresh installs (nothing detected) —
+    // a missing tool installs even when the latest version is not known yet.
+    $('#btn-install-update').classList.toggle('hidden', isSdkRoot ? false : !(upd.newer || !upd.current));
+    $('#btn-install-update-label').textContent = upd.newer ? 'Update now' : 'Install now';
+    $('#dlg-version-dir').classList.toggle('hidden', !isSdkRoot);
+    if (isSdkRoot) {
+      $('#dlg-version-dir-path').textContent = sdkDir.dir || '…';
+      void ensureSdkDir();
+    }
     $('#scrim').classList.remove('hidden');
     $('#dlg-version').classList.remove('hidden');
   }
@@ -844,6 +1018,7 @@
     // Collapse info-only blocks so the progress view always fits the window.
     $('#dlg-version-cmd').classList.add('hidden');
     $('#dlg-version-hint').classList.add('hidden');
+    $('#dlg-version-dir').classList.add('hidden');
     $('#dlg-version-progress').classList.remove('hidden');
     $('#btn-install-update').classList.add('hidden');
     $('#dlg-version-phase').textContent = 'Preparing…';
@@ -893,8 +1068,10 @@
     $('#btn-version-close').classList.remove('hidden');
     // Bring the info blocks back now that height allows it again.
     const isSdk = dialogUpd ? UPGRADE_HINTS[dialogUpd.id] === 'sdk' : false;
-    $('#dlg-version-cmd').classList.toggle('hidden', !isSdk || !(dialogUpd && dialogUpd.latest));
+    const isSdkRoot = dialogUpd?.id === 'sdk';
+    $('#dlg-version-cmd').classList.toggle('hidden', isSdkRoot || !isSdk || !(dialogUpd && dialogUpd.latest));
     $('#dlg-version-hint').classList.remove('hidden');
+    $('#dlg-version-dir').classList.toggle('hidden', !isSdkRoot);
   }
 
   function onUpdateEvent(evt: UpdateEvent): void {
@@ -912,8 +1089,13 @@
         finishInstall(false, 'Update canceled.');
         snack('Update canceled.');
       } else if (evt.code === 0) {
-        finishInstall(true, installState.kind === 'installer' ? 'Installer opened — finish the wizard, then use Check again.' : 'Installed. Re-checking your tools…');
-        snack(`${dialogUpd.label}: update finished.`);
+        finishInstall(
+          true,
+          installState.kind === 'installer'
+            ? 'Installer opened — finish the wizard, then use Check again.'
+            : 'Installed. Re-checking your tools…'
+        );
+        snack(`${dialogUpd.label}: ${dialogUpd.current ? 'update finished.' : 'installed.'}`);
         void runEnvCheck();
       } else {
         finishInstall(false, 'Update failed — see the log above.');
@@ -924,17 +1106,41 @@
 
   async function startInstall(): Promise<void> {
     const upd = dialogUpd;
-    if (!upd || !upd.latest || installState.running) return;
+    if (!upd || installState.running) return;
     if (isDemo()) {
       snack('Demo mode — installs are disabled.');
       return;
     }
-    const res = await window.builder.installUpdate(upd.id, upd.latest);
+    if (upd.id === 'sdk') {
+      // Whole-SDK bootstrap: the version dialog carried the target folder.
+      const dir = sdkDir.dir;
+      if (!dir) {
+        snack('Pick a folder to install the Android SDK into first.');
+        return;
+      }
+      const res = await window.builder.installSdkRoot(dir);
+      if (!res.ok) {
+        snack(res.error);
+        return;
+      }
+      enterInstallMode(res.kind);
+      return;
+    }
+    if (!upd.latest && upd.current) return; // info-only row, nothing to install
+    // A missing tool without a known version installs "latest" — the main
+    // process resolves the concrete release while the install runs.
+    const res = await window.builder.installUpdate(upd.id, upd.latest || 'latest');
     if (!res.ok) {
       snack(res.error);
       return;
     }
     enterInstallMode(res.kind);
+  }
+
+  /** Upload progress streamed while `googleRegister` runs in the main process. */
+  function onGoogleEvent(evt: GoogleEvent): void {
+    if (evt.type === 'phase') setPublishPhase(evt.id);
+    else appendPublishLog(evt.text, evt.stream || 'out');
   }
 
   // ─────────────────────────────── page 1 ──────────────────────────────────
@@ -1411,6 +1617,9 @@
     storepass: ['#wrap-storepass', '#err-storepass'],
     country: ['#wrap-country', '#err-country'],
     archs: [null, '#err-archs'],
+    gclient: ['#wrap-gclient', '#err-gclient'],
+    gsecret: ['#wrap-gsecret', '#err-gsecret'],
+    pkg: ['#wrap-pkg', '#err-pkg'],
   };
 
   function setError(field: string, msg: string): void {
@@ -1939,6 +2148,7 @@
     $('#result-sub').textContent =
       `${cfg?.appName || 'App'} v${cfg?.version || ''} · ${cfg?.format === 'aab' ? 'AAB' : 'APK'} · ` +
       `${cfg?.signed ? 'signed' : 'unsigned'} · finished in ${fmtElapsed(Date.now() - state.buildStart)}`;
+    renderPublishCard();
   }
 
   async function downloadZip(): Promise<void> {
@@ -2093,6 +2303,207 @@
     syncButton();
   }
 
+  // ───────────────────── Google Play Console account ───────────────────────
+  // The connect flow opens the system browser (OAuth consent); main saves the
+  // refresh token encrypted only after the sign-in fully succeeded. Publish
+  // uploads the build's AAB through the Play Developer API — the first
+  // committed bundle registers the project's keystore as the upload key.
+
+  const GOOGLE_CLIENT_KEY = 'ab.gclient';
+
+  // True when the app ships its own OAuth client (resources/google-oauth.json):
+  // the card then works like the Google buttons on websites — one click, no
+  // client ID/secret to paste.
+  let googleBakedClient = false;
+
+  const GOOGLE_PHASE_TEXT: Record<string, string> = {
+    auth: 'Unlocking the saved Google account…',
+    edit: 'Opening a Play Console edit…',
+    upload: 'Uploading the bundle…',
+    track: 'Creating the draft internal release…',
+    commit: 'Committing the edit…',
+  };
+
+  function setGoogleConnectedUI(connected: boolean, email: string | null): void {
+    state.googleConnected = connected;
+    state.googleEmail = email;
+    $('#google-off').classList.toggle('hidden', connected);
+    $('#google-on').classList.toggle('hidden', !connected);
+    $('#google-email').textContent = email || '—';
+  }
+
+  /** Switches the connect card to baked-client mode: drop the manual fields,
+   *  shorten the note and turn the button into a "Sign in with Google". */
+  function applyGoogleBakedMode(): void {
+    googleBakedClient = true;
+    $('#wrap-gclient').classList.add('hidden');
+    $('#wrap-gsecret').classList.add('hidden');
+    const note = $('#google-off .note');
+    if (note) {
+      note.innerHTML = `Connect your developer account once and the Output page can upload a signed AAB to Play — the first upload enrolls the app in <b>Play App Signing</b> and registers this project&rsquo;s keystore as its <b>upload key</b>. Prerequisite: an app with the same package name in <a href="#" id="google-help-console">Play Console</a>. Credentials are stored encrypted (Windows user-bound) and only after the sign-in succeeds.`;
+      $(`#google-help-console`).addEventListener('click', (e) => {
+        e.preventDefault();
+        void window.builder.openExternal('https://play.google.com/console');
+      });
+    }
+    const btn = $('#btn-google-connect');
+    btn.innerHTML =
+      '<svg viewBox="0 0 24 24" class="icon">' +
+      '<path fill="#fff" d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58v3h3.86c2.26-2.09 3.56-5.17 3.56-8.82z"/>' +
+      '<path fill="#fff" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.31 24 12 24z"/>' +
+      '<path fill="#fff" d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.14-1.57.38-2.29V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.98-3.09z"/>' +
+      '<path fill="#fff" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.98 3.09C6.22 6.86 8.87 4.75 12 4.75z"/></svg>' +
+      'Sign in with Google';
+  }
+
+  async function refreshGoogleUI(): Promise<void> {
+    if (isDemo()) {
+      setGoogleConnectedUI(false, null);
+      return;
+    }
+    try {
+      const cfg = await window.builder.googleConfig();
+      if (cfg.hasClient) applyGoogleBakedMode();
+    } catch { /* older backend — keep the manual fields */ }
+    try {
+      const st = await window.builder.googleStatus();
+      setGoogleConnectedUI(st.connected, st.email);
+    } catch {
+      setGoogleConnectedUI(false, null);
+    }
+  }
+
+  async function connectGoogle(): Promise<void> {
+    if (isDemo()) {
+      snack('Demo mode — sign-in is disabled.');
+      return;
+    }
+    let clientId = '';
+    let clientSecret = '';
+    clearError('gclient');
+    clearError('gsecret');
+    if (!googleBakedClient) {
+      clientId = $<HTMLInputElement>('#field-gclient').value.trim();
+      clientSecret = $<HTMLInputElement>('#field-gsecret').value.trim();
+      if (!clientId) { setError('gclient', 'Paste the OAuth client ID from Google Cloud.'); return; }
+      // Secret optional: desktop-app clients are public, PKCE proves the app's
+      // identity — newer clients are created without a secret at all.
+    }
+
+    const btn = $<HTMLButtonElement>('#btn-google-connect');
+    btn.disabled = true;
+    snack('Waiting for the Google sign-in in your browser…');
+    try {
+      const res = await window.builder.googleConnect(clientId, clientSecret);
+      if (!res.ok) {
+        snack(res.error);
+        return;
+      }
+      if (!googleBakedClient && clientId) localStorage.setItem(GOOGLE_CLIENT_KEY, clientId);
+      $<HTMLInputElement>('#field-gsecret').value = '';
+      setGoogleConnectedUI(true, res.email);
+      snack(`Google account connected: ${res.email}`);
+    } catch (err) {
+      snack(`Sign-in failed: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function disconnectGoogle(): Promise<void> {
+    try {
+      const res = await window.builder.googleDisconnect();
+      if (!res.ok) {
+        snack(res.error || 'Could not disconnect.');
+        return;
+      }
+    } catch { /* ignore */ }
+    setGoogleConnectedUI(false, null);
+    snack('Google account disconnected — saved credentials removed.');
+  }
+
+  function appendPublishLog(text: string, stream: 'out' | 'err' = 'out'): void {
+    const log = $('#publish-log');
+    log.classList.remove('hidden');
+    const line = document.createElement('div');
+    line.textContent = text;
+    if (stream === 'err') line.style.color = 'var(--error)';
+    log.append(line);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function setPublishPhase(id: string): void {
+    const text = GOOGLE_PHASE_TEXT[id] || 'Working…';
+    $('#publish-phase').textContent = text;
+    appendPublishLog(text);
+  }
+
+  function syncPublishTrack(): void {
+    const input = $<HTMLInputElement>('#field-pubtrack');
+    $('#publish-track-checkbox').classList.toggle('on', input.checked);
+  }
+
+  function renderPublishCard(): void {
+    const hasAab = state.artifacts.some((a) => a.path.toLowerCase().endsWith('.aab'));
+    const show = hasAab && state.googleConnected && !isDemo();
+    $('#publish-card').classList.toggle('hidden', !show);
+    // A new build starts with a clean progress block (the previous run's log
+    // belongs to the old bundle).
+    $('#publish-progress').classList.add('hidden');
+    if (!show) return;
+    const pkg = state.project ? state.project.androidPackage : '';
+    if (!$<HTMLInputElement>('#field-pkg').value && pkg) $<HTMLInputElement>('#field-pkg').value = pkg;
+  }
+
+  async function publishToPlay(): Promise<void> {
+    if (state.publishRunning || isDemo()) return;
+    const aab = state.artifacts.find((a) => a.path.toLowerCase().endsWith('.aab'));
+    if (!aab) return;
+    if (!state.googleConnected) {
+      snack('Connect a Google account on the Configure page first.');
+      return;
+    }
+    const pkg = $<HTMLInputElement>('#field-pkg').value.trim();
+    clearError('pkg');
+    if (!/^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(pkg)) {
+      setError('pkg', 'Enter the Android package name, e.g. com.example.app.');
+      return;
+    }
+
+    const cfg = state.buildCfg;
+    state.publishRunning = true;
+    const btn = $<HTMLButtonElement>('#btn-publish');
+    btn.disabled = true;
+    $('#publish-progress').classList.remove('hidden');
+    $('#publish-log').innerHTML = '';
+    $('#publish-log').classList.add('hidden');
+    $('#publish-phase').textContent = 'Preparing…';
+    try {
+      const res = await window.builder.googleRegister({
+        aabPath: aab.path,
+        packageName: pkg,
+        draftTrack: $<HTMLInputElement>('#field-pubtrack').checked,
+        releaseName: `${cfg?.appName || 'App'} v${cfg?.version || ''}`,
+      });
+      if (res.ok) {
+        $('#publish-phase').textContent = `Done — Play accepted the bundle (versionCode ${res.versionCode ?? '?'}).`;
+        appendPublishLog('Key registered: Play Console → Release → Setup → App signing now lists this keystore as the upload key.');
+        snack('Bundle uploaded — upload key registered with Play.');
+      } else {
+        $('#publish-phase').textContent = 'Upload failed — see the log.';
+        appendPublishLog(res.error, 'err');
+        snack('Play upload failed.');
+      }
+    } catch (err) {
+      $('#publish-phase').textContent = 'Upload failed.';
+      appendPublishLog(String(err), 'err');
+      snack('Play upload failed.');
+    } finally {
+      state.publishRunning = false;
+      btn.disabled = false;
+    }
+  }
+
   // ───────────────────────── password generator ────────────────────────────
   const gen = {
     target: null as string | null,
@@ -2239,8 +2650,16 @@
     $('#btn-env-continue').addEventListener('click', () => setPage('select'));
     $('#btn-env-recheck').addEventListener('click', runEnvCheck);
     $('#btn-env-recheck2').addEventListener('click', runEnvCheck);
+    void initDownloadSource();
     $('#btn-version-close').addEventListener('click', closeVersionDialog);
     $('#btn-install-update').addEventListener('click', () => void startInstall());
+    // Fresh-SDK bootstrap: retarget the install folder from the dialog.
+    $('#btn-version-dir').addEventListener('click', async () => {
+      const dir = await window.builder.selectDirectory();
+      if (!dir) return;
+      sdkDir = { dir, loaded: true };
+      $('#dlg-version-dir-path').textContent = dir;
+    });
     $('#btn-install-cancel').addEventListener('click', async () => {
       $<HTMLButtonElement>('#btn-install-cancel').disabled = true;
       $('#dlg-version-phase').textContent = 'Canceling…';
@@ -2273,6 +2692,24 @@
     // custom frameless-window controls
     $('#win-minimize').addEventListener('click', () => window.builder.minimizeWindow());
     $('#win-close').addEventListener('click', () => window.builder.closeWindow());
+
+    // google play console (page 2 account card + page 4 publish card)
+    $<HTMLInputElement>('#field-gclient').value = localStorage.getItem(GOOGLE_CLIENT_KEY) || '';
+    $<HTMLInputElement>('#field-gclient').addEventListener('input', () => clearError('gclient'));
+    $<HTMLInputElement>('#field-gsecret').addEventListener('input', () => clearError('gsecret'));
+    $('#btn-google-connect').addEventListener('click', () => void connectGoogle());
+    $('#btn-google-disconnect').addEventListener('click', () => void disconnectGoogle());
+    const helpLink = (id: string, url: string) =>
+      $(id).addEventListener('click', (e) => {
+        e.preventDefault();
+        void window.builder.openExternal(url);
+      });
+    helpLink('#google-help-console', 'https://play.google.com/console');
+    helpLink('#google-help-api', 'https://console.cloud.google.com/apis/credentials');
+    $<HTMLInputElement>('#field-pubtrack').addEventListener('change', syncPublishTrack);
+    syncPublishTrack();
+    $('#btn-publish').addEventListener('click', () => void publishToPlay());
+    window.builder.onGoogleEvent(onGoogleEvent);
 
     // name-the-project dialog (page 1)
     $('#btn-name-ok').addEventListener('click', confirmProjectName);
@@ -2365,6 +2802,7 @@
 
     window.builder.onBuildEvent(onBuildEvent);
     window.builder.onUpdateEvent(onUpdateEvent);
+    void refreshGoogleUI();
     loadProjects();
     setPage('deps');
     runEnvCheck();
@@ -2534,6 +2972,10 @@
           : ['[============================================ ]  62% Unzipping… cmake;4.1.2',
              'Installing SDK package cmake;4.1.2']
         ).forEach(appendInstallLog);
+      },
+      // Fresh-SDK bootstrap dialog (screenshots only).
+      sdkInstallDialog() {
+        openVersionDialog({ id: 'sdk', label: 'Android SDK', current: null, latest: null, preview: null, newer: false, source: '', error: null });
       },
       updateDialogDone() {
         finishInstall(true, 'Installed. Re-checking your tools…');

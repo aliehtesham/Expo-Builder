@@ -5,9 +5,21 @@ import * as fs from 'fs';
 import { spawn, execSync, ChildProcess } from 'child_process';
 import AdmZip from 'adm-zip';
 import { validateProject, applyVersions } from './lib/project-info';
-import { checkEnvironment, resolveBash, findAndroidSdk } from './lib/env-check';
-import { checkDependencyUpdates, findSdkmanager } from './lib/sdk-updates';
-import { runSdkUpdate, downloadFile, cancelActiveInstall } from './lib/sdk-install';
+import {
+  checkEnvironment,
+  resolveBash,
+  findAndroidSdk,
+  checkJava,
+  checkPlatformTools,
+  checkBuildTools,
+  checkPlatforms,
+  checkNdk,
+  checkCmake,
+} from './lib/env-check';
+import { checkDependencyUpdates, findSdkmanager, fetchManifestFrom, latestGitRelease, latestNodeLts, parseManifest } from './lib/sdk-updates';
+import { runSdkUpdate, downloadFile, cancelActiveInstall, ensureCmdlineTools, installSdkAt, installPackageDirect, latestStableOf } from './lib/sdk-install';
+import { MIRRORS, activeMirror, setActiveMirror, setCustomBase, activeCustomBase, mirrorById } from './lib/mirrors';
+import { connectGoogleAccount, registerUploadKey, cancelPendingConnect, GoogleAccount, OAuthClient } from './lib/play-console';
 
 // When packaged, resources/** is unpacked next to app.asar because bash cannot
 // read files inside Electron's virtual asar filesystem.
@@ -120,16 +132,19 @@ ipcMain.handle('validate-project', async (_e: IpcMainInvokeEvent, dir: string) =
 
 // Pre-flight gate: detect every tool the build pipeline needs. Runs fresh on
 // every call (a few `--version` probes) so a newly installed SDK is picked up
-// without restarting the app.
-ipcMain.handle('check-environment', async () => checkEnvironment({ bashPath: resolveBash() }));
+// without restarting the app. `sdkPath` is a folder the app itself bootstrapped
+// an SDK into (saved below) so a custom install location is detected too.
+ipcMain.handle('check-environment', async () =>
+  checkEnvironment({ bashPath: resolveBash(), sdkPath: savedSdkPath() })
+);
 
 // Latest-release watch for the deps page (read-only). The probes hit Google's
-// SDK manifest plus nodejs.org/adoptium.net, so the result is cached for 10
-// minutes — repeated re-checks stay instant.
+// SDK manifest plus nodejs.org/adoptium.net/github.com, so the result is cached
+// for 10 minutes — repeated re-checks stay instant.
 let updatesCache: { ts: number; value: Promise<UpdatesResult> } | null = null;
 ipcMain.handle('check-updates', async (_e: IpcMainInvokeEvent, force?: boolean): Promise<UpdatesResult> => {
   if (!force && updatesCache && Date.now() - updatesCache.ts < 10 * 60 * 1000) return updatesCache.value;
-  const value = checkDependencyUpdates();
+  const value = checkDependencyUpdates({ sdkPath: savedSdkPath() });
   updatesCache = { ts: Date.now(), value };
   value.catch(() => {
     updatesCache = null; // failed run: don't serve the rejection from cache
@@ -137,15 +152,39 @@ ipcMain.handle('check-updates', async (_e: IpcMainInvokeEvent, force?: boolean):
   return value;
 });
 
-// ─────────────────────── dependency update action ──────────────────────────
-// The install half of the newer-version watch: SDK components go through the
-// SDK's own sdkmanager (side-by-side), Node/JDK download their official MSI
-// into Downloads and open it. Progress streams to the renderer on a dedicated
-// channel so it never mixes with build events.
+// ─────────────────────── dependency install actions ────────────────────────
+// The install half of the deps page, covering BOTH newer releases and missing
+// tools: SDK components go through the SDK's own sdkmanager (side-by-side) —
+// except freshly missing ones, which download straight from Google's
+// repository so no sdkmanager/JDK is needed; Node/JDK/Git download their
+// official installer into Downloads and open it. Progress streams to the
+// renderer on a dedicated channel so it never mixes with build events.
 
-const INSTALLABLE_IDS = ['platform-tools', 'build-tools', 'platforms', 'ndk', 'cmake', 'node', 'jdk'];
+const INSTALLABLE_IDS = ['platform-tools', 'build-tools', 'platforms', 'ndk', 'cmake', 'node', 'jdk', 'bash'];
 const NODE_MSI_URL = (v: string) => `https://nodejs.org/dist/v${v}/node-v${v}-x64.msi`;
 const JDK_MSI_URL = 'https://api.adoptium.net/v3/installer/latest/21/windows/x64/jdk/hotspot/normal/eclipse?project=jdk';
+
+// SDK folder the app itself bootstrapped (survives restarts, so a custom
+// install location is found by the environment probes without env vars).
+const sdkPathFile = () => path.join(app.getPath('userData'), 'sdk-path.json');
+
+function savedSdkPath(): string | null {
+  try {
+    const saved = JSON.parse(fs.readFileSync(sdkPathFile(), 'utf8'));
+    const p = typeof saved?.path === 'string' ? saved.path : null;
+    return p && path.isAbsolute(p) ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSdkPath(p: string): void {
+  fs.mkdirSync(path.dirname(sdkPathFile()), { recursive: true });
+  fs.writeFileSync(sdkPathFile(), JSON.stringify({ path: p, ts: Date.now() }, null, 2));
+}
+
+// Which SDK families a fresh SDK bootstrap needs, in install order.
+const BOOT_FAMILIES = ['platform-tools', 'build-tools', 'platforms', 'cmake', 'ndk'] as const;
 
 let installRunning = false;
 let installCanceled = false;
@@ -154,66 +193,239 @@ function sendUpdate(evt: UpdateEvent): void {
   if (win && !win.isDestroyed()) win.webContents.send('update-event', evt);
 }
 
+const updateHandlers = {
+  onPhase: (id: 'license' | 'download' | 'install') => sendUpdate({ type: 'phase', id }),
+  onProgress: (percent: number | null, text: string) => sendUpdate({ type: 'progress', percent, text }),
+  onLine: (text: string, stream: 'out' | 'err') => sendUpdate({ type: 'line', text, stream }),
+};
+
+/** Download an official installer and open it — the user finishes the wizard. */
+function downloadAndOpenInstaller(resolve: () => Promise<{ url: string; dest: string }>): void {
+  void (async () => {
+    try {
+      sendUpdate({ type: 'phase', id: 'download' });
+      const { url, dest } = await resolve();
+      await downloadFile(url, dest, updateHandlers);
+      if (installCanceled) return;
+      sendUpdate({ type: 'progress', percent: 100, text: 'Installer downloaded' });
+      const child = dest.toLowerCase().endsWith('.msi')
+        ? spawn('msiexec.exe', ['/i', dest], { detached: true, stdio: 'ignore' })
+        : spawn(dest, [], { detached: true, stdio: 'ignore' });
+      child.unref();
+      sendUpdate({ type: 'installer-launched', path: dest });
+      sendUpdate({ type: 'exit', code: 0, canceled: false });
+    } catch (err) {
+      sendUpdate({ type: 'line', text: err instanceof Error ? err.message : String(err), stream: 'err' });
+      sendUpdate({ type: 'exit', code: 1, canceled: installCanceled });
+    } finally {
+      installRunning = false;
+    }
+  })();
+}
+
+/** 'ok'/'warn' = the component exists (update via sdkmanager); 'missing' = nothing there. */
+function sdkFamilyStatus(sdk: string, id: string): CheckStatus {
+  switch (id) {
+    case 'platform-tools': return checkPlatformTools(sdk).status;
+    case 'build-tools': return checkBuildTools(sdk).status;
+    case 'platforms': return checkPlatforms(sdk).status;
+    case 'ndk': return checkNdk(sdk).status;
+    case 'cmake': return checkCmake(sdk).status;
+    default: return 'missing';
+  }
+}
+
 ipcMain.handle('install-update', async (_e: IpcMainInvokeEvent, id: string, version: string): Promise<InstallStartResult> => {
   if (installRunning) return { ok: false, error: 'An update is already running.' };
   if (buildChild) return { ok: false, error: 'A build is running — install the update after it finishes.' };
   if (!INSTALLABLE_IDS.includes(id)) return { ok: false, error: 'Unknown dependency.' };
-  // Accepts tool versions ("4.1.2", "24.22.0") and platform tags ("android-37.2").
+  // Accepts tool versions ("4.1.2", "24.22.0"), platform tags ("android-37.2")
+  // and the sentinel "latest" — used when the version check could not reach
+  // its source; the concrete version is resolved while the install runs.
   if (!/^[A-Za-z0-9][\w.+-]*$/.test(version)) return { ok: false, error: 'Invalid version string.' };
-  if (id === 'node' || id === 'jdk') {
+
+  // Node / JDK / Git Bash: official installers (system locations, user-driven).
+  if (id === 'node' || id === 'jdk' || id === 'bash') {
     if (!WIN) return { ok: false, error: 'Installer download is only supported on Windows.' };
     installRunning = true;
     installCanceled = false;
-    void (async () => {
-      try {
-        sendUpdate({ type: 'phase', id: 'download' });
-        const url = id === 'node' ? NODE_MSI_URL(version.replace(/^v/, '')) : JDK_MSI_URL;
-        const dest = path.join(
-          app.getPath('downloads'),
-          id === 'node' ? `node-v${version.replace(/^v/, '')}-x64.msi` : 'temurin-jdk-21-latest-x64.msi'
-        );
-        await downloadFile(url, dest, {
-          onPhase: (pid) => sendUpdate({ type: 'phase', id: pid }),
-          onProgress: (percent, text) => sendUpdate({ type: 'progress', percent, text }),
-          onLine: (text, stream) => sendUpdate({ type: 'line', text, stream }),
-        });
-        if (installCanceled) return;
-        sendUpdate({ type: 'progress', percent: 100, text: 'Installer downloaded' });
-        const child = spawn('msiexec.exe', ['/i', dest], { detached: true, stdio: 'ignore' });
-        child.unref();
-        sendUpdate({ type: 'installer-launched', path: dest });
-        sendUpdate({ type: 'exit', code: 0, canceled: false });
-      } catch (err) {
-        sendUpdate({ type: 'line', text: String(err), stream: 'err' });
-        sendUpdate({ type: 'exit', code: 1, canceled: installCanceled });
-      } finally {
-        installRunning = false;
-      }
-    })();
+    if (id === 'bash') {
+      // The Git for Windows release page names the asset — look it up at
+      // install time so the "latest" pointer never goes stale in the app.
+      downloadAndOpenInstaller(async () => {
+        const rel = await latestGitRelease();
+        if (!rel) throw new Error('github.com was unreachable — could not locate the Git for Windows installer.');
+        return { url: rel.url, dest: path.join(app.getPath('downloads'), `Git-${rel.version}-64-bit.exe`) };
+      });
+    } else if (id === 'jdk') {
+      // The Adoptium "latest" URL is version-independent — no lookup needed.
+      downloadAndOpenInstaller(async () => ({
+        url: JDK_MSI_URL,
+        dest: path.join(app.getPath('downloads'), 'temurin-jdk-21-latest-x64.msi'),
+      }));
+    } else {
+      downloadAndOpenInstaller(async () => {
+        // Node's MSI URL needs a concrete version — resolve the current LTS
+        // when the caller only knows "latest".
+        let v = version.replace(/^v/, '');
+        if (v === 'latest') {
+          v = (await latestNodeLts()) || '';
+          if (!v) throw new Error('nodejs.org was unreachable — could not determine the current LTS version.');
+        }
+        return { url: NODE_MSI_URL(v), dest: path.join(app.getPath('downloads'), `node-v${v}-x64.msi`) };
+      });
+    }
     return { ok: true, kind: 'installer' };
   }
 
-  const sdk = findAndroidSdk();
-  if (!sdk) return { ok: false, error: 'No Android SDK found.' };
-  if (!findSdkmanager(sdk)) {
-    return { ok: false, error: 'sdkmanager was not found — install the Android SDK command-line tools via Android Studio first.' };
+  const sdk = findAndroidSdk(savedSdkPath());
+  if (!sdk) return { ok: false, error: 'No Android SDK found — use the Install button on the Android SDK row first.' };
+
+  installRunning = true;
+  installCanceled = false;
+  void (async () => {
+    try {
+      if (sdkFamilyStatus(sdk, id) === 'missing' || activeMirror().id !== 'google') {
+        // Nothing installed yet, or a mirror is selected: pull the package
+        // straight from the repository manifest. Works without sdkmanager and
+        // without a JDK — and unlike sdkmanager it follows the selected
+        // download source (sdkmanager itself always talks to dl.google.com).
+        const m = await fetchManifestFrom();
+        let v = version;
+        if (v === 'latest') {
+          v = latestStableOf(parseManifest(m.xml), id) || '';
+          if (!v) throw new Error(`No stable ${id} release was found in the repository manifest.`);
+        }
+        await installPackageDirect(sdk, m.xml, id === 'platform-tools' ? 'platform-tools' : `${id};${v}`, updateHandlers, m.base);
+        sendUpdate({ type: 'exit', code: 0, canceled: installCanceled });
+        return;
+      }
+      // Upgrade path: sdkmanager. It needs a JDK and the command-line tools.
+      if (version === 'latest') {
+        sendUpdate({ type: 'line', text: `${id} is already installed — pick a version chip to update it.`, stream: 'err' });
+        sendUpdate({ type: 'exit', code: 1, canceled: installCanceled });
+        return;
+      }
+      if (!checkJava().path) {
+        sendUpdate({ type: 'line', text: 'sdkmanager needs a JDK — install the JDK first (its row offers the installer).', stream: 'err' });
+        sendUpdate({ type: 'exit', code: 1, canceled: installCanceled });
+        return;
+      }
+      if (!findSdkmanager(sdk)) {
+        sendUpdate({ type: 'phase', id: 'download' });
+        sendUpdate({ type: 'progress', percent: null, text: 'Fetching the Android SDK command-line tools…' });
+        await ensureCmdlineTools(sdk, updateHandlers);
+      }
+      const code = await runSdkUpdate(sdk, `${id};${version}`, updateHandlers);
+      sendUpdate({ type: 'exit', code, canceled: installCanceled });
+    } catch (err) {
+      sendUpdate({ type: 'line', text: err instanceof Error ? err.message : String(err), stream: 'err' });
+      sendUpdate({ type: 'exit', code: 1, canceled: installCanceled });
+    } finally {
+      installRunning = false;
+    }
+  })();
+  return { ok: true, kind: 'sdk' };
+});
+
+// ─────────────────────────── download source (mirror) ──────────────────────
+// Where the Android SDK repository (manifest + package zips) is fetched from:
+// Google by default, a full mirror for networks where Google is blocked. The
+// choice is persisted app-wide; version checks and SDK installs both follow it.
+
+const sourceFile = () => path.join(app.getPath('userData'), 'download-source.json');
+let sourceLoaded = false;
+
+function loadDownloadSource(): void {
+  if (sourceLoaded) return;
+  sourceLoaded = true;
+  try {
+    const saved = JSON.parse(fs.readFileSync(sourceFile(), 'utf8'));
+    if (saved && typeof saved.id === 'string') {
+      if (saved.id === 'custom' && typeof saved.customBase === 'string') setCustomBase(saved.customBase);
+      else setActiveMirror(saved.id);
+    }
+  } catch {
+    /* first run or unreadable — stay on the default (Google) */
+  }
+}
+
+function saveDownloadSource(id: string, customBase?: string | null): void {
+  fs.mkdirSync(path.dirname(sourceFile()), { recursive: true });
+  fs.writeFileSync(sourceFile(), JSON.stringify(customBase ? { id, customBase, ts: Date.now() } : { id, ts: Date.now() }, null, 2));
+}
+
+ipcMain.handle('get-download-source', (): DownloadSourceInfo => {
+  loadDownloadSource();
+  const providers: DownloadSourceProvider[] = MIRRORS.map(({ id, label, region, host, note }) => ({ id, label, region, host, note }));
+  const customBase = activeCustomBase();
+  providers.push({
+    id: 'custom',
+    label: 'Custom source',
+    region: 'Custom',
+    host: customBase ? new URL(customBase).host : '',
+    note: 'Your own mirror or proxy — any base URL that serves repository2-3.xml.',
+  });
+  return { current: activeMirror().id, providers, customBase };
+});
+
+ipcMain.handle('set-download-source', (_e: IpcMainInvokeEvent, id: string, customBase?: string): { ok: boolean; current?: string; error?: string } => {
+  let activeId: string;
+  if (String(id) === 'custom') {
+    const m = setCustomBase(String(customBase || ''));
+    if (!m) return { ok: false, error: 'Enter a valid base URL (https:// or http://) that serves repository2-3.xml — e.g. https://my-proxy.example/android/repository/' };
+    activeId = m.id;
+  } else {
+    const m = mirrorById(String(id || ''));
+    if (!m) return { ok: false, error: 'Unknown download source.' };
+    setActiveMirror(m.id);
+    activeId = m.id;
+  }
+  sourceLoaded = true;
+  saveDownloadSource(activeId, activeId === 'custom' ? activeCustomBase() : null);
+  updatesCache = null; // the version check must re-read the new source
+  return { ok: true, current: activeId };
+});
+
+// Fresh-SDK bootstrap: where a new SDK lands by default, and the one-shot
+// "create a complete SDK here" action behind the Android SDK row's Install
+// button. The folder is remembered so the environment probes find it.
+ipcMain.handle('sdk-default-dir', (): SdkDirInfo => {
+  const def = path.join(process.env.LOCALAPPDATA || app.getPath('home'), 'Android', 'Sdk');
+  return { default: def, saved: savedSdkPath() };
+});
+
+ipcMain.handle('install-sdk-root', async (_e: IpcMainInvokeEvent, dir: string): Promise<InstallStartResult> => {
+  if (installRunning) return { ok: false, error: 'An update is already running.' };
+  if (buildChild) return { ok: false, error: 'A build is running — install after it finishes.' };
+  const root = path.resolve(String(dir || '').trim());
+  if (!path.isAbsolute(root)) return { ok: false, error: 'Pick an absolute target folder for the SDK.' };
+  if (root === path.parse(root).root) return { ok: false, error: 'The SDK needs its own subfolder, not a drive root.' };
+  if (fs.existsSync(root)) {
+    const children = fs.readdirSync(root).filter((n) => !n.startsWith('.'));
+    const looksLikeSdk = ['platform-tools', 'build-tools', 'platforms', 'cmdline-tools', 'ndk', 'licenses'].some((d) =>
+      fs.existsSync(path.join(root, d))
+    );
+    if (children.length && !looksLikeSdk) {
+      return { ok: false, error: 'That folder is not empty — pick an empty folder (or one that already holds an Android SDK).' };
+    }
   }
 
   installRunning = true;
   installCanceled = false;
-  void runSdkUpdate(sdk, `${id};${version}`, {
-    onPhase: (pid) => sendUpdate({ type: 'phase', id: pid }),
-    onProgress: (percent, text) => sendUpdate({ type: 'progress', percent, text }),
-    onLine: (text, stream) => sendUpdate({ type: 'line', text, stream }),
-  })
-    .then((code) => sendUpdate({ type: 'exit', code, canceled: installCanceled }))
-    .catch((err) => {
-      sendUpdate({ type: 'line', text: String(err), stream: 'err' });
+  void (async () => {
+    try {
+      fs.mkdirSync(root, { recursive: true });
+      saveSdkPath(root);
+      await installSdkAt(root, updateHandlers, () => installCanceled);
+      sendUpdate({ type: 'exit', code: installCanceled ? 1 : 0, canceled: installCanceled });
+    } catch (err) {
+      sendUpdate({ type: 'line', text: err instanceof Error ? err.message : String(err), stream: 'err' });
       sendUpdate({ type: 'exit', code: 1, canceled: installCanceled });
-    })
-    .finally(() => {
+    } finally {
       installRunning = false;
-    });
+    }
+  })();
   return { ok: true, kind: 'sdk' };
 });
 
@@ -362,6 +574,202 @@ ipcMain.handle('vault-forget', (_e: IpcMainInvokeEvent, projectDir: string) => {
   delete all[vaultKeyOf(projectDir)];
   writeVault(all);
   return { ok: true };
+});
+
+// ─────────────────────── Google Play Console account vault ─────────────────
+// One connected developer account per machine (not per project): the OAuth
+// refresh token / client credentials are stored with the same DPAPI +
+// Windows Hello treatment as the signing passwords. The e-mail stays
+// plaintext so the UI can label the connection without unlocking anything.
+
+interface GoogleVaultEntry {
+  v: number;
+  ts: number;
+  email: string;
+  clientId?: string;
+  clientSecret?: string;
+  refreshToken?: string;
+}
+
+const googleVaultFile = () => path.join(app.getPath('userData'), 'google-vault.json');
+
+function readGoogleVault(): GoogleVaultEntry | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(googleVaultFile(), 'utf8'));
+    return parsed && typeof parsed === 'object' && parsed.email ? (parsed as GoogleVaultEntry) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeGoogleVault(entry: GoogleVaultEntry | null): void {
+  const file = googleVaultFile();
+  if (!entry) {
+    try { fs.unlinkSync(file); } catch { /* nothing saved = already gone */ }
+    return;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(entry, null, 2));
+}
+
+const enc = (val: string) => safeStorage.encryptString(val).toString('base64');
+const dec = (blob: string | undefined) => {
+  if (!blob) return '';
+  return safeStorage.decryptString(Buffer.from(blob, 'base64'));
+};
+
+function sendGoogle(evt: GoogleEvent): void {
+  if (win && !win.isDestroyed()) win.webContents.send('google-event', evt);
+}
+
+let googleConnecting = false;
+let googlePublishing = false;
+
+// The build ships its own OAuth client — users never see an ID or secret and
+// the connect card is a plain "Sign in with Google" button, the same model as
+// the Google buttons on websites. A desktop client's ID is a public identifier
+// (it rides along in every consent URL Google renders) and desktop clients
+// need no secret — PKCE covers the app's identity. The ID is stored XOR-split
+// into the compiled code instead of a plaintext file, so neither the
+// repository nor the unpacked resources carry Google credentials; tools/
+// bake-oauth.js regenerates the two constants below when the client rotates.
+const OAUTH_ID_KEY = 'RZ+EdNkJ5HuaOZT3beI84kHafv/2mBemWIriUqVtqXU=';
+const OAUTH_ID_DATA = 'fae1TO0910KtDqfGQIxVgXHpCseeoHXBKPqTPcMA2RMq/rBMrGyDTqpN/cUGzF2SMalQmJn3cMo9/5E31w7GGzH66gD3aosW';
+
+function decodeOAuthClientId(): string {
+  try {
+    const key = Buffer.from(OAUTH_ID_KEY, 'base64');
+    const data = Buffer.from(OAUTH_ID_DATA, 'base64');
+    return Buffer.from(data.map((b, i) => b ^ key[i % key.length])).toString('utf8');
+  } catch {
+    return '';
+  }
+}
+
+function readBakedOAuthClient(): OAuthClient | null {
+  // A resources/google-oauth.json (gitignored) overrides the embedded client —
+  // dev convenience for trying a different client without touching code.
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(RES_DIR, 'google-oauth.json'), 'utf8'));
+    const clientId = String(parsed?.clientId || '').trim();
+    if (clientId) {
+      const clientSecret = String(parsed?.clientSecret || '').trim();
+      return clientSecret ? { clientId, clientSecret } : { clientId };
+    }
+  } catch { /* no override file — fall through to the embedded client */ }
+  const clientId = decodeOAuthClientId();
+  return clientId ? { clientId } : null;
+}
+
+ipcMain.handle('google-config', (): GoogleConfigResult => ({ hasClient: !!readBakedOAuthClient() }));
+
+// Browser consent flow (PKCE + loopback redirect). Only a verified account is
+// persisted — the vault write happens after the token exchange and e-mail
+// check succeeded, satisfying "save only when successful".
+ipcMain.handle('google-connect', async (_e: IpcMainInvokeEvent, clientId?: string, clientSecret?: string): Promise<GoogleConnectResult> => {
+  if (IS_SMOKE || IS_E2E) return { ok: false, error: 'Disabled in test mode.' };
+  if (googleConnecting) return { ok: false, error: 'A Google sign-in is already waiting in the browser.' };
+  if (googlePublishing) return { ok: false, error: 'An upload is running — connect after it finishes.' };
+  if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'Encryption is not available on this system.' };
+  // A baked-in client wins; otherwise the renderer passes the user's own.
+  const client = readBakedOAuthClient() || {
+    clientId: String(clientId || '').trim(),
+    clientSecret: String(clientSecret || '').trim() || undefined,
+  };
+  if (!client.clientId) return { ok: false, error: 'No OAuth client ID configured — paste one in the card above.' };
+
+  googleConnecting = true;
+  try {
+    const account = await connectGoogleAccount(client, (url) => void shell.openExternal(url));
+    writeGoogleVault({
+      v: 1,
+      ts: Date.now(),
+      email: account.email,
+      clientId: enc(account.clientId),
+      clientSecret: account.clientSecret ? enc(account.clientSecret) : undefined,
+      refreshToken: enc(account.refreshToken),
+    });
+    return { ok: true, email: account.email };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    googleConnecting = false;
+  }
+});
+
+ipcMain.handle('google-status', (): GoogleStatusResult => {
+  const entry = readGoogleVault();
+  return { connected: !!(entry && entry.refreshToken), email: entry ? entry.email : null };
+});
+
+ipcMain.handle('google-disconnect', () => {
+  if (googlePublishing) return { ok: false, error: 'An upload is running — disconnect after it finishes.' };
+  writeGoogleVault(null);
+  return { ok: true };
+});
+
+// Registers the keystore that signed the AAB as the app's Play upload key by
+// uploading the bundle through the Play Developer API. Reading the saved
+// account asks for Windows Hello first (same overlay as the signing vault).
+ipcMain.handle('google-register', async (_e: IpcMainInvokeEvent, req: GoogleRegisterRequest): Promise<GoogleRegisterResult> => {
+  if (IS_SMOKE || IS_E2E) return { ok: false, error: 'Disabled in test mode.' };
+  if (googlePublishing) return { ok: false, error: 'An upload is already running.' };
+  if (googleConnecting) return { ok: false, error: 'A Google sign-in is still waiting — finish or cancel it first.' };
+
+  const packageName = String(req?.packageName || '').trim();
+  const aabPath = String(req?.aabPath || '').trim();
+  if (!/^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(packageName)) {
+    return { ok: false, error: 'Invalid Android package name (expected something like com.example.app).' };
+  }
+  if (!aabPath.toLowerCase().endsWith('.aab') || !fs.existsSync(aabPath)) {
+    return { ok: false, error: 'The .aab file was not found — rebuild the project as an AAB first.' };
+  }
+  const entry = readGoogleVault();
+  if (!entry || !entry.refreshToken) return { ok: false, error: 'No Google account connected — connect it on the Configure page.' };
+  if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'Encryption is not available on this system.' };
+
+  const auth = await verifyWindowsHello('Expo Builder — unlock the connected Google account');
+  if (auth === 'denied') return { ok: false, error: 'Locked — Windows Hello did not verify.' };
+
+  let account: GoogleAccount;
+  try {
+    account = { email: entry.email, clientId: dec(entry.clientId), clientSecret: dec(entry.clientSecret), refreshToken: dec(entry.refreshToken) };
+  } catch {
+    return { ok: false, error: 'The saved Google credentials could not be decrypted — disconnect and connect the account again.' };
+  }
+  if (!account.clientId || !account.refreshToken) {
+    return { ok: false, error: 'The saved Google credentials are incomplete — disconnect and connect the account again.' };
+  }
+
+  googlePublishing = true;
+  sendGoogle({ type: 'phase', id: 'auth' });
+  try {
+    const outcome = await registerUploadKey(account, {
+      aabPath,
+      packageName,
+      draftTrack: !!req.draftTrack,
+      releaseName: String(req.releaseName || 'Expo Builder upload'),
+    }, sendGoogle);
+    sendGoogle({ type: 'line', text: 'Edit committed — signing key registered with Play App Signing.', stream: 'out' });
+    return { ok: true, versionCode: outcome.versionCode };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    sendGoogle({ type: 'line', text: msg, stream: 'err' });
+    return { ok: false, error: msg };
+  } finally {
+    googlePublishing = false;
+  }
+});
+
+ipcMain.handle('open-external', async (_e: IpcMainInvokeEvent, url: string) => {
+  // The renderer is locked down by CSP; curated links open in the real browser.
+  if (!/^https:\/\//.test(String(url || ''))) return { ok: false, error: 'Only https links can be opened.' };
+  try {
+    await shell.openExternal(url);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 });
 
 ipcMain.handle('start-build', async (_e: IpcMainInvokeEvent, cfg: BuildConfig) => {
@@ -590,6 +998,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   killBuildTree();
   cancelActiveInstall();
+  cancelPendingConnect();
 });
 
 // ------------------------------------------------------------------ smoke test
@@ -622,8 +1031,38 @@ async function runSmoke(w: BrowserWindow): Promise<void> {
       // environment gate (page 0): all-ok + missing variants
       await js(`window.__demo.envCheck()`);
       await shot('0-deps');
+      // download-source selector: one option per provider (Google + mirrors)
+      const srcOpts = await js(`document.querySelectorAll('#sel-download-source option').length`);
+      if (srcOpts < 2) errors.push(`download-source options too few: ${srcOpts}`);
       await js(`window.__demo.envMissing()`);
       await shot('0b-deps-missing');
+      // missing-but-installable rows carry an install chip that opens the
+      // install dialog (fresh-install flavor, "Install now")
+      const installChips = await js(`document.querySelectorAll('#env-list .env-row.missing .ver-chip.get').length`);
+      if (installChips < 2) errors.push(`missing-row install chips too few: ${installChips}`);
+      await js(`[...document.querySelectorAll('#env-list .env-row.missing')]
+        .find((r) => r.querySelector('.env-label')?.textContent.startsWith('CMake'))
+        .querySelector('.ver-chip.get').click()`);
+      await shot('0g-deps-install');
+      const instDlg = await js(`!document.querySelector('#dlg-version').classList.contains('hidden')`);
+      const instBtnHidden = await js(`document.querySelector('#btn-install-update').classList.contains('hidden')`);
+      const instBtnLabel = await js(`document.querySelector('#btn-install-update-label').textContent.trim()`);
+      if (!instDlg) errors.push('install dialog did not open from a missing row');
+      if (instBtnHidden) errors.push('Install button should be visible for a missing dependency');
+      if (!/Install now/.test(String(instBtnLabel))) errors.push(`install button label wrong: ${instBtnLabel}`);
+      await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+      await sleep(200);
+      // fresh-SDK bootstrap dialog: target folder row + Install button
+      await js(`window.__demo.sdkInstallDialog()`);
+      await shot('0h-deps-sdk');
+      const sdkDlg = await js(`!document.querySelector('#dlg-version').classList.contains('hidden')`);
+      const dirRow = await js(`!document.querySelector('#dlg-version-dir').classList.contains('hidden')`);
+      const dirPath = await js(`document.querySelector('#dlg-version-dir-path').textContent`);
+      if (!sdkDlg) errors.push('sdk install dialog did not open');
+      if (!dirRow) errors.push('sdk install dialog is missing the target-folder row');
+      if (!/^[A-Za-z]:[\\/]/.test(String(dirPath))) errors.push(`sdk target dir wrong: ${dirPath}`);
+      await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+      await sleep(200);
       const envRows = await js(`document.querySelectorAll('#env-list .env-row').length`);
       const envDisabled = await js(`document.querySelector('#btn-env-continue').disabled`);
       await js(`window.__demo.envCheck()`);

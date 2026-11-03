@@ -157,6 +157,34 @@ type UpdateEvent =
 
 type InstallStartResult = { ok: true; kind: 'sdk' | 'installer' } | { ok: false; error: string };
 
+/** Default + last-saved target folder for a fresh Android SDK install. */
+interface SdkDirInfo {
+  default: string;
+  saved: string | null;
+}
+
+/**
+ * One selectable download source for the Android SDK repository (Google by
+ * default; mirrors for networks where Google is blocked). The source decides
+ * where the repository manifest and every SDK/NDK/CMake package zip are
+ * fetched from; the active source is persisted app-wide in the main process.
+ */
+interface DownloadSourceProvider {
+  id: string;
+  label: string;
+  region: string;
+  host: string;
+  note: string;
+}
+
+interface DownloadSourceInfo {
+  /** Id of the currently active source (a provider id, or "custom"). */
+  current: string;
+  providers: DownloadSourceProvider[];
+  /** Base URL of the custom source, when one is configured. */
+  customBase?: string | null;
+}
+
 interface ZipEntry {
   path: string;
   name: string;
@@ -185,14 +213,50 @@ type VaultLoadResult =
   | { ok: true; auth: VaultAuth; secrets: VaultSecrets }
   | { ok: false; reason: 'empty' | 'denied' | 'no-encryption' | 'corrupt' };
 
+// ── Google Play Console account (OAuth) + upload-key registration ──
+
+/** Result of the browser consent flow; the account is only saved on ok. */
+type GoogleConnectResult = { ok: true; email: string } | { ok: false; error: string };
+type GoogleStatusResult = { connected: boolean; email: string | null };
+/** True when the app ships its own OAuth client (resources/google-oauth.json) —
+ *  then the connect card needs no client ID/secret, just the sign-in button. */
+type GoogleConfigResult = { hasClient: boolean };
+
+/** Uploads the signed AAB through the Play Developer API — the first committed
+ *  bundle registers the signing keystore as the app's Play upload key. */
+interface GoogleRegisterRequest {
+  aabPath: string;
+  packageName: string;
+  /** Also attach the bundle as a draft release on the Internal testing track. */
+  draftTrack: boolean;
+  /** Release name shown in Play Console when draftTrack is on. */
+  releaseName: string;
+}
+type GoogleRegisterResult = { ok: true; versionCode: number | null } | { ok: false; error: string };
+
+/** Progress streamed while `googleRegister` runs (dedicated channel). */
+type GoogleEvent =
+  | { type: 'phase'; id: 'auth' | 'edit' | 'upload' | 'track' | 'commit' }
+  | { type: 'line'; text: string; stream: 'out' | 'err' };
+
 /** The full `window.builder` surface exposed by the preload bridge. */
 interface BuilderApi {
   selectDirectory(): Promise<string | null>;
   validateProject(dir: string): Promise<ValidateResult>;
   checkEnvironment(): Promise<EnvCheckResult>;
   checkUpdates(force?: boolean): Promise<UpdatesResult>;
-  /** Download + install a newer release (sdkmanager for SDK components; official MSI installer for Node/JDK). */
+  /** Download + install a newer release (sdkmanager for SDK components; official installer for Node/JDK/Git).
+   *  `version` accepts a concrete release or "latest" — resolved while the install runs. */
   installUpdate(id: string, version: string): Promise<InstallStartResult>;
+  /** Where a fresh Android SDK would land (default) and the last one the app installed to. */
+  sdkDefaultDir(): Promise<SdkDirInfo>;
+  /** Selectable download sources for the Android SDK repository + the active one. */
+  getDownloadSource(): Promise<DownloadSourceInfo>;
+  /** Switch the download source (persisted; the next version check uses it).
+   *  `customBase` is required when id is "custom" — a base URL serving repository2-3.xml. */
+  setDownloadSource(id: string, customBase?: string): Promise<{ ok: boolean; current?: string; error?: string }>;
+  /** Bootstrap a complete Android SDK (command-line tools + every required component) into `dir`. */
+  installSdkRoot(dir: string): Promise<InstallStartResult>;
   cancelInstall(): Promise<{ ok: boolean }>;
   onUpdateEvent(cb: (evt: UpdateEvent) => void): () => void;
   startBuild(cfg: BuildConfig): Promise<StartBuildResult>;
@@ -217,4 +281,16 @@ interface BuilderApi {
   cancelVaultAuth(): Promise<{ ok: boolean }>;
   /** Fired when the OS Windows Hello consent prompt goes up ('prompt'). */
   onVaultAuthEvent(cb: (phase: 'prompt') => void): () => void;
+  // ── Google Play Console: account capture + upload-key registration ──
+  /** Whether the app ships its own OAuth client (no manual ID/secret needed). */
+  googleConfig(): Promise<GoogleConfigResult>;
+  /** Browser consent flow (PKCE + loopback); the account is saved encrypted on success. */
+  googleConnect(clientId: string, clientSecret: string): Promise<GoogleConnectResult>;
+  googleStatus(): Promise<GoogleStatusResult>;
+  googleDisconnect(): Promise<{ ok: boolean; error?: string }>;
+  /** Upload the signed AAB via the Play Developer API, registering the keystore as the upload key. */
+  googleRegister(req: GoogleRegisterRequest): Promise<GoogleRegisterResult>;
+  onGoogleEvent(cb: (evt: GoogleEvent) => void): () => void;
+  /** Open a URL in the user's default browser (setup docs etc.). */
+  openExternal(url: string): Promise<{ ok: boolean; error?: string }>;
 }
